@@ -1,0 +1,10 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { path = "../core" }
+ui_text = { path = "../ui_text" }
+crossterm = "0.28"
+anyhow = "1.0"

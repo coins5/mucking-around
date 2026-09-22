@@ -1,6 +1,7 @@
-[package]
-name = "mucking-around"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace]
+members = [
+    "crates/core",
+    "crates/ui_text",
+    "crates/cli",
+]
+resolver = "2"
