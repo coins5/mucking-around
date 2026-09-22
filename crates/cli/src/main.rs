@@ -46,6 +46,7 @@ fn main() -> Result<()> {
     let mut game = GameState::new();
     let frame_duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
     let mut last_tick = Instant::now();
+    let mut frame_count = 0u64;
 
     loop {
         let now = Instant::now();
@@ -72,24 +73,25 @@ fn main() -> Result<()> {
                         return Ok(());
                     }
 
-                    // Check for unlocking activities (1-5)
+                    // Check for upgrading / unlocking activities (1-5)
                     if let KeyCode::Char(ch @ '1'..='5') = key_event.code {
                         let index = (ch as usize) - ('1' as usize);
-                        let _ = game.unlock_activity(index);
+                        let _ = game.upgrade_activity(index);
                     }
                 }
             }
         }
 
         // Render current frame
-        let frame = ui_text::render_game_frame(&game, BAR_WIDTH);
+        let frame = ui_text::render_game_frame(&game, BAR_WIDTH, frame_count);
+        frame_count = frame_count.wrapping_add(1);
         execute!(stdout(), cursor::MoveTo(0, 0))?;
         for line in frame.lines() {
             execute!(stdout(), terminal::Clear(ClearType::CurrentLine))?;
             println!("{line}\r");
         }
         execute!(stdout(), terminal::Clear(ClearType::CurrentLine))?;
-        println!("\r\nControles: [1-5] Desbloquear actividad | [q / Esc] Salir\r");
+        println!("\r\nControles: [1-5] Mejorar / Desbloquear actividad | [q / Esc] Salir\r");
         stdout().flush()?;
 
         // If non-interactive environment, avoid infinite loop
@@ -109,7 +111,7 @@ fn main() -> Result<()> {
 
 fn print_exit_summary(game: &GameState) -> Result<()> {
     println!(
-        "\r\nSimulación finalizada. Puntos de Flojera acumulados: {:.1}\r",
+        "\r\nSimulación finalizada. Puntos de Flojera acumulados: {:.2}\r",
         game.sloth_points
     );
     Ok(())

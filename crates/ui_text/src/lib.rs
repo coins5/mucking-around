@@ -134,31 +134,89 @@ pub fn render_sub_block_bar(current: f64, max: f64, width_in_chars: usize) -> St
     output
 }
 
-/// Formats a single activity display line.
+/// Unicode lower vertical block elements ordered from 1/8 to 8/8 (`U+2581` through `U+2588`).
+pub const VERTICAL_BLOCKS: [char; 8] = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+/// Renders an oscillating equalizer waveform for activities in turbo mode using vertical block elements.
 ///
-/// - If unlocked: displays index, name, Unicode sub-block bar, remaining time, and reward.
-/// - If locked: displays `[BLOQUEADO] Nombre - Costo: XX pts (Presiona [N] para comprar)`.
+/// Pre-allocates string capacity and generates a smooth, pseudo-harmonic wave combining
+/// trigonometric functions of column index and frame count. Guaranteed to contain
+/// exactly `width` monospace characters.
 #[must_use]
-pub fn format_activity_line(activity: &ActivityState, index: usize, bar_width: usize) -> String {
+pub fn render_turbo_equalizer(width: usize, frame_seed: u64) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let mut output = String::with_capacity(width * 4);
+    let t = (frame_seed as f64) * 0.25;
+
+    for col in 0..width {
+        let x = (col as f64) * 0.6;
+        let wave = (x + t).sin() * 0.5 + (x * 1.7 - t * 1.2).sin() * 0.35 + (x * 0.5 + t * 0.8).cos() * 0.15;
+        let normalized = ((wave + 1.0) * 0.5).clamp(0.0, 0.9999);
+        let block_index = ((normalized * 8.0).floor() as usize).min(7);
+        output.push(VERTICAL_BLOCKS[block_index]);
+    }
+
+    output
+}
+
+/// Formats a single activity display line according to its state:
+///
+/// - If locked (`level == 0`): `[BLOQUEADO] Nombre -> Desbloquear [Tecla]: Cuesta X.XX pts`.
+/// - If active and normal (`level > 0 && !is_turbo()`): Displays milestone progress, sub-block progress bar, percentage, remaining time, reward per cycle, and upgrade cost.
+/// - If active and turbo (`level > 0 && is_turbo()`): Displays milestone progress, oscillating equalizer bar, continuous rate (+XX.XX pts/seg), speed multiplier, and upgrade cost.
+#[must_use]
+pub fn format_activity_line(
+    activity: &ActivityState,
+    index: usize,
+    bar_width: usize,
+    frame_seed: u64,
+) -> String {
     let key = index + 1;
-    if activity.unlocked {
-        let bar = render_sub_block_bar(activity.progress, activity.config.duration, bar_width);
-        let remaining = activity.remaining_time();
-        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + 64);
-        let _ = write!(
-            line,
-            "[{key}] {name} [{bar}] Faltan {remaining:.1}s | +{reward:.1} pts",
-            name = activity.config.name,
-            reward = activity.config.reward,
-        );
-        line
-    } else {
+    if activity.level == 0 {
+        let cost = activity.next_cost();
         let mut line = String::with_capacity(activity.config.name.len() + 80);
         let _ = write!(
             line,
-            "[BLOQUEADO] {name} - Costo: {cost:.0} pts (Presiona [{key}] para comprar)",
+            "[BLOQUEADO] {name} -> Desbloquear [{key}]: Cuesta {cost:.2} pts",
             name = activity.config.name,
-            cost = activity.config.cost,
+        );
+        return line;
+    }
+
+    let milestone_tag = match activity.next_milestone() {
+        Some(next) => format!("[Lvl. {} / Hito: {}]", activity.level, next.level),
+        None => format!("[Lvl. {} - MAX]", activity.level),
+    };
+
+    let next_level = activity.level + 1;
+    let next_cost = activity.next_cost();
+
+    if activity.is_turbo() {
+        let equalizer = render_turbo_equalizer(bar_width, frame_seed);
+        let pts_per_sec = activity.pts_per_second();
+        let speed = activity.speed_multiplier();
+
+        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + 140);
+        let _ = write!(
+            line,
+            "{milestone_tag} {name} [{equalizer}] ⚡ TURBO: +{pts_per_sec:.2} pts/seg ({speed:.1}x vel) | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
+            name = activity.config.name,
+        );
+        line
+    } else {
+        let bar = render_sub_block_bar(activity.progress, activity.current_duration(), bar_width);
+        let percentage = (activity.progress_ratio() * 100.0).floor() as u32;
+        let remaining = activity.remaining_time();
+        let reward = activity.current_reward();
+
+        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + 140);
+        let _ = write!(
+            line,
+            "{milestone_tag} {name} [{bar}] {percentage}% Faltan {remaining:.2}s | +{reward:.2} pts | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
+            name = activity.config.name,
         );
         line
     }
@@ -166,18 +224,18 @@ pub fn format_activity_line(activity: &ActivityState, index: usize, bar_width: u
 
 /// Renders the complete multi-bar text frame for the procrastination game.
 ///
-/// Header displays total balance: `Puntos de Flojera: XX.X`.
+/// Header displays total balance: `Puntos de Flojera: XX.XX`.
 /// Following lines display the formatted state of each activity in the roster.
 #[must_use]
-pub fn render_game_frame(state: &GameState, bar_width: usize) -> String {
-    let estimated_line_len = bar_width * 4 + 90;
+pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -> String {
+    let estimated_line_len = bar_width * 4 + 140;
     let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 128);
 
-    let _ = writeln!(frame, "Puntos de Flojera: {:.1}", state.sloth_points);
+    let _ = writeln!(frame, "Puntos de Flojera: {:.2}", state.sloth_points);
     let _ = writeln!(frame, "------------------------------------------------------------");
 
     for (index, activity) in state.activities.iter().enumerate() {
-        let line = format_activity_line(activity, index, bar_width);
+        let line = format_activity_line(activity, index, bar_width, frame_seed);
         let _ = writeln!(frame, "{line}");
     }
 
@@ -187,7 +245,7 @@ pub fn render_game_frame(state: &GameState, bar_width: usize) -> String {
 /// Legacy helper for formatting a game state status.
 #[must_use]
 pub fn format_game_status(state: &GameState, bar_width: usize) -> String {
-    render_game_frame(state, bar_width)
+    render_game_frame(state, bar_width, 0)
 }
 
 /// Formats a single progress status line with a sub-block bar, percentage, and resource display.
@@ -336,21 +394,69 @@ mod tests {
     #[test]
     fn test_format_activity_line_unlocked() {
         let state = GameState::new();
-        let line = format_activity_line(&state.activities[0], 0, 10);
-        assert!(line.contains("[1] Esperar a que cargue la barrita"));
+        let line = format_activity_line(&state.activities[0], 0, 10, 0);
+        assert!(line.contains("[Lvl. 1 / Hito: 25] Esperar a que cargue la barrita"));
         assert!(line.contains("[          ]"));
-        assert!(line.contains("Faltan 5.0s"));
-        assert!(line.contains("+1.0 pts"));
+        assert!(line.contains("0% Faltan 5.00s"));
+        assert!(line.contains("+1.00 pts"));
+        assert!(line.contains("Subir a Lvl. 2: Cuesta 1.15 pts [Presiona 1]"));
     }
 
     #[test]
     fn test_format_activity_line_locked() {
         let state = GameState::new();
-        let line = format_activity_line(&state.activities[1], 1, 10);
+        let line = format_activity_line(&state.activities[1], 1, 10, 0);
         assert_eq!(
             line,
-            "[BLOQUEADO] Mirar a la nada fijamente - Costo: 5 pts (Presiona [2] para comprar)"
+            "[BLOQUEADO] Mirar a la nada fijamente -> Desbloquear [2]: Cuesta 5.00 pts"
         );
+    }
+
+    #[test]
+    fn test_render_turbo_equalizer() {
+        assert_eq!(render_turbo_equalizer(0, 0), "");
+
+        let eq1 = render_turbo_equalizer(16, 0);
+        assert_eq!(eq1.chars().count(), 16);
+        for ch in eq1.chars() {
+            assert!(
+                VERTICAL_BLOCKS.contains(&ch),
+                "Character {ch} not in VERTICAL_BLOCKS"
+            );
+        }
+
+        let eq2 = render_turbo_equalizer(16, 15);
+        assert_eq!(eq2.chars().count(), 16);
+        // Waves should shift with different frame seeds
+        assert_ne!(eq1, eq2);
+    }
+
+    #[test]
+    fn test_format_activity_line_turbo() {
+        let mut state = GameState::new();
+        // Set activity 0 to level 1000 where speed_multiplier is 64x -> duration = 5.0 / 64.0 = 0.078125s (Turbo)
+        state.activities[0].level = 1000;
+        assert!(state.activities[0].is_turbo());
+
+        let line = format_activity_line(&state.activities[0], 0, 12, 42);
+        assert!(line.contains("[Lvl. 1000 / Hito: 5000]"));
+        assert!(line.contains("Esperar a que cargue la barrita"));
+        assert!(line.contains("⚡ TURBO:"));
+        assert!(line.contains("pts/seg"));
+        assert!(line.contains("64.0x vel"));
+        assert!(line.contains("Subir a Lvl. 1001:"));
+    }
+
+    #[test]
+    fn test_format_activity_line_max_milestone() {
+        let mut state = GameState::new();
+        state.activities[0].level = 9999;
+        assert!(state.activities[0].next_milestone().is_none());
+
+        let line = format_activity_line(&state.activities[0], 0, 12, 0);
+        assert!(line.contains("[Lvl. 9999 - MAX]"));
+        assert!(line.contains("⚡ TURBO:"));
+        assert!(line.contains("1000.0x vel"));
     }
 
     #[test]
@@ -359,27 +465,30 @@ mod tests {
         state.sloth_points = 12.5;
         state.activities[0].progress = 2.5;
 
-        let frame = render_game_frame(&state, 10);
+        let frame = render_game_frame(&state, 10, 0);
         let lines: Vec<&str> = frame.lines().collect();
 
-        assert_eq!(lines[0], "Puntos de Flojera: 12.5");
+        assert_eq!(lines[0], "Puntos de Flojera: 12.50");
         assert_eq!(lines[1], "------------------------------------------------------------");
-        assert!(lines[2].contains("[1] Esperar a que cargue la barrita [█████     ] Faltan 2.5s | +1.0 pts"));
+        assert_eq!(
+            lines[2],
+            "[Lvl. 1 / Hito: 25] Esperar a que cargue la barrita [█████     ] 50% Faltan 2.50s | +1.00 pts | Subir a Lvl. 2: Cuesta 1.15 pts [Presiona 1]"
+        );
         assert_eq!(
             lines[3],
-            "[BLOQUEADO] Mirar a la nada fijamente - Costo: 5 pts (Presiona [2] para comprar)"
+            "[BLOQUEADO] Mirar a la nada fijamente -> Desbloquear [2]: Cuesta 5.00 pts"
         );
         assert_eq!(
             lines[4],
-            "[BLOQUEADO] Hacer scroll infinito sin ver nada - Costo: 25 pts (Presiona [3] para comprar)"
+            "[BLOQUEADO] Hacer scroll infinito sin ver nada -> Desbloquear [3]: Cuesta 25.00 pts"
         );
         assert_eq!(
             lines[5],
-            "[BLOQUEADO] Abrir la refri vacía por quinta vez - Costo: 100 pts (Presiona [4] para comprar)"
+            "[BLOQUEADO] Abrir la refri vacía por quinta vez -> Desbloquear [4]: Cuesta 100.00 pts"
         );
         assert_eq!(
             lines[6],
-            "[BLOQUEADO] Ordenar el escritorio para no trabajar - Costo: 350 pts (Presiona [5] para comprar)"
+            "[BLOQUEADO] Ordenar el escritorio para no trabajar -> Desbloquear [5]: Cuesta 350.00 pts"
         );
     }
 }
