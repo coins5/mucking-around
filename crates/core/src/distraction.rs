@@ -13,6 +13,17 @@ pub enum DistractionRewardType {
     TimeWarp { simulated_seconds: f64 },
 }
 
+/// Feedback report for the last claimed unexpected distraction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClaimedDistractionFeedback {
+    /// Distraction title.
+    pub title: String,
+    /// Detailed lore or short summary.
+    pub description: String,
+    /// Human-readable summary of the exact reward earned.
+    pub effect_summary: String,
+}
+
 /// Static configuration for an unexpected distraction event.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DistractionConfig {
@@ -26,6 +37,84 @@ pub struct DistractionConfig {
     pub time_to_claim: f64,
     /// The reward awarded upon claiming.
     pub reward: DistractionRewardType,
+}
+
+impl DistractionConfig {
+    #[must_use]
+    pub fn new(
+        id: &'static str,
+        title: &'static str,
+        description: &'static str,
+        time_to_claim: f64,
+        reward: DistractionRewardType,
+    ) -> Self {
+        Self {
+            id,
+            title,
+            description,
+            time_to_claim,
+            reward,
+        }
+    }
+
+    #[must_use]
+    pub fn frenzy(
+        id: &'static str,
+        title: &'static str,
+        description: &'static str,
+        time_to_claim: f64,
+        multiplier: f64,
+        duration_secs: f64,
+    ) -> Self {
+        Self::new(
+            id,
+            title,
+            description,
+            time_to_claim,
+            DistractionRewardType::Frenzy {
+                multiplier,
+                duration_secs,
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn instant_sloth(
+        id: &'static str,
+        title: &'static str,
+        description: &'static str,
+        time_to_claim: f64,
+        percentage_of_current: f64,
+        min_flat: f64,
+    ) -> Self {
+        Self::new(
+            id,
+            title,
+            description,
+            time_to_claim,
+            DistractionRewardType::InstantSloth {
+                percentage_of_current,
+                min_flat,
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn time_warp(
+        id: &'static str,
+        title: &'static str,
+        description: &'static str,
+        time_to_claim: f64,
+        simulated_seconds: f64,
+    ) -> Self {
+        Self::new(
+            id,
+            title,
+            description,
+            time_to_claim,
+            DistractionRewardType::TimeWarp { simulated_seconds },
+        )
+    }
 }
 
 impl<'de> Deserialize<'de> for DistractionConfig {
@@ -63,6 +152,16 @@ impl<'de> Deserialize<'de> for DistractionConfig {
                 "zillow_dream",
                 "Casas Inalcanzables",
                 "Mirando departamentos de 2 millones de dólares que jamás podrás pagar.",
+            ),
+            "pereza_instantanea" => (
+                "pereza_instantanea",
+                "Pereza Instantánea",
+                "Quince gloriosos minutos de siesta imprevista en horario de máxima productividad.",
+            ),
+            "wikipedia_hole" => (
+                "wikipedia_hole",
+                "Agujero de Wikipedia",
+                "Empezaste investigando un error de sintaxis y terminaste leyendo sobre el Sacro Imperio Romano.",
             ),
             _ => (
                 Box::leak(helper.id.into_boxed_str()) as &'static str,
@@ -130,49 +229,69 @@ impl Default for DistractionSystemConfig {
     }
 }
 
+impl DistractionSystemConfig {
+    /// Adds a distraction configuration to the spawn pool.
+    pub fn add_distraction(&mut self, distraction: DistractionConfig) {
+        self.roster.push(distraction);
+    }
+
+    /// Builder pattern for registering an additional distraction configuration.
+    #[must_use]
+    pub fn with_distraction(mut self, distraction: DistractionConfig) -> Self {
+        self.add_distraction(distraction);
+        self
+    }
+}
+
 /// Returns the standard default roster of distraction events.
 #[must_use]
 pub fn default_distractions() -> Vec<DistractionConfig> {
     vec![
-        DistractionConfig {
-            id: "medieval_pan",
-            title: "Video de Restauración",
-            description: "Te apareció un video de 45 min sobre cómo restaurar una sartén de hierro fundido.",
-            time_to_claim: 7.0,
-            reward: DistractionRewardType::Frenzy {
-                multiplier: 7.0,
-                duration_secs: 25.0,
-            },
-        },
-        DistractionConfig {
-            id: "whatsapp_meme",
-            title: "Meme del Grupo",
-            description: "Tu amigo mandó un meme de gatos al grupo. Es obligatorio reaccionar.",
-            time_to_claim: 6.0,
-            reward: DistractionRewardType::InstantSloth {
-                percentage_of_current: 0.20,
-                min_flat: 50.0,
-            },
-        },
-        DistractionConfig {
-            id: "bread_quiz",
-            title: "Test de Personalidad",
-            description: "Descubre qué tipo de pan dulce eres según tu signo zodiacal.",
-            time_to_claim: 8.0,
-            reward: DistractionRewardType::TimeWarp {
-                simulated_seconds: 90.0,
-            },
-        },
-        DistractionConfig {
-            id: "zillow_dream",
-            title: "Casas Inalcanzables",
-            description: "Mirando departamentos de 2 millones de dólares que jamás podrás pagar.",
-            time_to_claim: 5.0,
-            reward: DistractionRewardType::Frenzy {
-                multiplier: 15.0,
-                duration_secs: 10.0,
-            },
-        },
+        DistractionConfig::frenzy(
+            "medieval_pan",
+            "Video de Restauración",
+            "Te apareció un video de 45 min sobre cómo restaurar una sartén de hierro fundido.",
+            7.0,
+            7.0,
+            25.0,
+        ),
+        DistractionConfig::instant_sloth(
+            "whatsapp_meme",
+            "Meme del Grupo",
+            "Tu amigo mandó un meme de gatos al grupo. Es obligatorio reaccionar.",
+            6.0,
+            0.20,
+            50.0,
+        ),
+        DistractionConfig::time_warp(
+            "pereza_instantanea",
+            "Pereza Instantánea",
+            "Quince gloriosos minutos de siesta imprevista en horario de máxima productividad.",
+            8.0,
+            900.0,
+        ),
+        DistractionConfig::time_warp(
+            "bread_quiz",
+            "Test de Personalidad",
+            "Descubre qué tipo de pan dulce eres según tu signo zodiacal.",
+            8.0,
+            90.0,
+        ),
+        DistractionConfig::frenzy(
+            "zillow_dream",
+            "Casas Inalcanzables",
+            "Mirando departamentos de 2 millones de dólares que jamás podrás pagar.",
+            5.0,
+            15.0,
+            10.0,
+        ),
+        DistractionConfig::time_warp(
+            "wikipedia_hole",
+            "Agujero de Wikipedia",
+            "Empezaste investigando un error de sintaxis y terminaste leyendo sobre el Sacro Imperio Romano.",
+            7.0,
+            300.0,
+        ),
     ]
 }
 
@@ -183,11 +302,29 @@ mod tests {
     #[test]
     fn test_default_distractions_roster() {
         let roster = default_distractions();
-        assert_eq!(roster.len(), 4);
+        assert_eq!(roster.len(), 6);
         assert_eq!(roster[0].id, "medieval_pan");
         assert_eq!(roster[1].id, "whatsapp_meme");
-        assert_eq!(roster[2].id, "bread_quiz");
-        assert_eq!(roster[3].id, "zillow_dream");
+        assert_eq!(roster[2].id, "pereza_instantanea");
+        assert_eq!(roster[3].id, "bread_quiz");
+        assert_eq!(roster[4].id, "zillow_dream");
+        assert_eq!(roster[5].id, "wikipedia_hole");
+    }
+
+    #[test]
+    fn test_custom_distraction_registration() {
+        let mut config = DistractionSystemConfig::default();
+        let initial_count = config.roster.len();
+        config.add_distraction(DistractionConfig::frenzy(
+            "custom_distraction",
+            "Título Personalizado",
+            "Lore personalizado",
+            5.0,
+            3.0,
+            10.0,
+        ));
+        assert_eq!(config.roster.len(), initial_count + 1);
+        assert_eq!(config.roster.last().unwrap().id, "custom_distraction");
     }
 
     #[test]

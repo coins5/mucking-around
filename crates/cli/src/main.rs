@@ -138,7 +138,9 @@ fn main() -> Result<()> {
                         ActiveView::PermanentUpgradesShop => match key_event.code {
                             KeyCode::Char(ch @ '1'..='5') => {
                                 let index = (ch as usize) - ('1' as usize);
-                                if let Some(upgrade) = permanent_upgrades.get(index) {
+                                if let Some(upgrade) = permanent_upgrades.get(index)
+                                    && game.is_permanent_upgrade_revealed(upgrade.id)
+                                {
                                     let _ = game.buy_permanent_upgrade(upgrade.id);
                                 }
                             }
@@ -179,12 +181,16 @@ fn main() -> Result<()> {
                                 let _ = game.upgrade_activity(index);
                             }
                             KeyCode::Char('p' | 'P') => {
-                                game.open_prestige_dialog();
-                                execute!(stdout(), Clear(ClearType::All))?;
+                                if game.prestige_revealed {
+                                    game.open_prestige_dialog();
+                                    execute!(stdout(), Clear(ClearType::All))?;
+                                }
                             }
                             KeyCode::Char('u' | 'U') => {
-                                game.open_upgrade_menu();
-                                execute!(stdout(), Clear(ClearType::All))?;
+                                if game.prestige_revealed {
+                                    game.open_upgrade_menu();
+                                    execute!(stdout(), Clear(ClearType::All))?;
+                                }
                             }
                             KeyCode::Char('s' | 'S') => {
                                 game.set_view(ActiveView::ExistentialStats);
@@ -238,16 +244,33 @@ fn main() -> Result<()> {
 
         let controls = match game.active_view {
             ActiveView::WelcomeOfflineModal => {
-                "\r\nControles: [Cualquier tecla / Esc / Espacio] Continuar al juego\r"
+                "\r\nControles: [Cualquier tecla / Esc / Espacio] Continuar al juego\r".to_string()
             }
-            ActiveView::PrestigeDialog => "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r",
+            ActiveView::PrestigeDialog => "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r".to_string(),
             ActiveView::PermanentUpgradesShop => {
-                "\r\nControles: [1-5] Comprar Mejora | [U / Esc / q] Volver al juego\r"
+                let count = permanent_upgrades.iter().filter(|u| game.is_permanent_upgrade_revealed(u.id)).count().max(1);
+                let keys = if count == 1 {
+                    "[1] Comprar Mejora".to_string()
+                } else {
+                    format!("[1-{count}] Comprar Mejora")
+                };
+                format!("\r\nControles: {keys} | [U / Esc / q] Volver al juego\r")
             }
-            ActiveView::ExistentialStats => "\r\nControles: [S / Esc / q] Volver al juego\r",
-            ActiveView::AchievementsGallery => "\r\nControles: [A / Esc / q] Volver al juego\r",
+            ActiveView::ExistentialStats => "\r\nControles: [S / Esc / q] Volver al juego\r".to_string(),
+            ActiveView::AchievementsGallery => "\r\nControles: [A / Esc / q] Volver al juego\r".to_string(),
             ActiveView::MainDashboard => {
-                "\r\nControles: [Espacio] Lapicero / Reclamar | [1-5] Mejorar | [P] Crisis | [U] Mejoras | [S] Estadísticas | [A] Logros | [q / Esc] Salir\r"
+                let num_revealed = game.activities.iter().filter(|a| a.is_revealed).count().max(1);
+                let act_keys = if num_revealed == 1 {
+                    "[1] Mejorar".to_string()
+                } else {
+                    format!("[1-{num_revealed}] Mejorar")
+                };
+                let prestige_keys = if game.prestige_revealed {
+                    " | [P] Crisis | [U] Mejoras"
+                } else {
+                    ""
+                };
+                format!("\r\nControles: [Espacio] Lapicero / Reclamar | {act_keys}{prestige_keys} | [S] Estadísticas | [A] Logros | [q / Esc] Salir\r")
             }
         };
         println!("{controls}");

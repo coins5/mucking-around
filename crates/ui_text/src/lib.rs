@@ -239,24 +239,45 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
     let estimated_line_len = bar_width * 4 + 200;
     let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 512);
 
-    let prestige_bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
     let achieve_bonus_pct = ((state.achievements_multiplier() - 1.0) * 100.0 * 10.0).round() / 10.0;
-    let _ = writeln!(
-        frame,
-        "Puntos: {:.2} | Epifanías Zen: {} (+{}%) | Logros: +{:.1}%",
-        state.sloth_points, state.epiphanies, prestige_bonus_pct, achieve_bonus_pct
-    );
-
-    if state.frenzy_timer > 0.0 {
+    if state.prestige_revealed {
+        let prestige_bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
         let _ = writeln!(
             frame,
-            "⚡ ¡FRENESÍ DE FLOJERA ACTIVO! x{:.1} ({:.1}s restantes)",
+            "Puntos: {:.2} | Epifanías Zen: {} (+{}%) | Logros: +{:.1}%",
+            state.sloth_points, state.epiphanies, prestige_bonus_pct, achieve_bonus_pct
+        );
+    } else {
+        let _ = writeln!(
+            frame,
+            "Puntos: {:.2} | Logros: +{:.1}%",
+            state.sloth_points, achieve_bonus_pct
+        );
+    }
+
+    if state.frenzy_timer > 0.0 {
+        let frenzy_bar = render_sub_block_bar(
+            state.frenzy_timer,
+            state.frenzy_max_duration.max(state.frenzy_timer).max(0.001),
+            bar_width,
+        );
+        let _ = writeln!(
+            frame,
+            "⚡ ¡FRENESÍ DE FLOJERA ACTIVO! [{frenzy_bar}] x{:.1} ({:.1}s restantes)",
             state.frenzy_multiplier, state.frenzy_timer
         );
     }
 
     if let Some(ref sound) = state.last_pen_sound {
         let _ = writeln!(frame, "🖊️ Lapicero: {sound}");
+    }
+
+    if let Some(ref last) = state.last_claimed_distraction {
+        let _ = writeln!(
+            frame,
+            "🎁 Última distracción: {} -> {}",
+            last.title, last.effect_summary
+        );
     }
 
     let _ = writeln!(frame, "------------------------------------------------------------");
@@ -287,7 +308,12 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
                 min_flat
             ),
             DistractionRewardType::TimeWarp { simulated_seconds } => {
-                format!("Salto temporal de {simulated_seconds:.0}s")
+                let mins = (simulated_seconds / 60.0).round() as u64;
+                if mins > 0 {
+                    format!("Salto temporal de {mins} min ({simulated_seconds:.0}s)")
+                } else {
+                    format!("Salto temporal de {simulated_seconds:.0}s")
+                }
             }
         };
         let _ = writeln!(
@@ -299,20 +325,36 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
     }
 
     for (index, activity) in state.activities.iter().enumerate() {
-        let line = format_activity_line(activity, index, bar_width, frame_seed);
-        let _ = writeln!(frame, "{line}");
+        if activity.is_revealed {
+            let line = format_activity_line(activity, index, bar_width, frame_seed);
+            let _ = writeln!(frame, "{line}");
+        }
     }
 
     let _ = writeln!(frame, "------------------------------------------------------------");
+    if state.prestige_revealed {
+        let _ = writeln!(
+            frame,
+            "[P] CRISIS EXISTENCIAL -> Reclamar +{} Epifanías (Histórico: {:.2} pts)",
+            state.claimable_epiphanies(),
+            state.lifetime_sloth_points
+        );
+    }
+
+    let num_revealed = state.activities.iter().filter(|a| a.is_revealed).count().max(1);
+    let act_shortcut = if num_revealed == 1 {
+        "[1] Subir Nivel".to_string()
+    } else {
+        format!("[1-{num_revealed}] Subir Nivel")
+    };
+    let prestige_shortcuts = if state.prestige_revealed {
+        " | [P] Crisis | [U] Mejoras"
+    } else {
+        ""
+    };
     let _ = writeln!(
         frame,
-        "[P] CRISIS EXISTENCIAL -> Reclamar +{} Epifanías (Histórico: {:.2} pts)",
-        state.claimable_epiphanies(),
-        state.lifetime_sloth_points
-    );
-    let _ = writeln!(
-        frame,
-        "[ESPACIO] Lapicero / Reclamar | [1-5] Subir Nivel | [U] Mejoras | [S] Estadísticas | [A] Logros | [Q] Salir"
+        "[ESPACIO] Lapicero / Reclamar | {act_shortcut}{prestige_shortcuts} | [S] Estadísticas | [A] Logros | [Q] Salir"
     );
 
     frame
@@ -416,15 +458,17 @@ pub fn render_achievements_frame(state: &GameState, achievements: &[AchievementC
     for ach in achievements {
         let is_unlocked = state.unlocked_achievements.contains(ach.id);
         let bonus_pct = (ach.bonus_multiplier * 100.0 * 10.0).round() / 10.0;
-        let tag = if is_unlocked {
-            format!("[DESBLOQUEADO (+{bonus_pct:.1}%)]")
+        if is_unlocked {
+            let tag = format!("[DESBLOQUEADO (+{bonus_pct:.1}%)]");
+            let _ = writeln!(frame, "{} {}", tag, ach.name);
+            let _ = writeln!(frame, "    Condición: {}", ach.description);
+            let _ = writeln!(frame, "    \"{}\"", ach.lore);
         } else {
-            "[BLOQUEADO]".to_string()
-        };
-
-        let _ = writeln!(frame, "{} {}", tag, ach.name);
-        let _ = writeln!(frame, "    Condición: {}", ach.description);
-        let _ = writeln!(frame, "    \"{}\"", ach.lore);
+            let tag = "[BLOQUEADO]";
+            let _ = writeln!(frame, "\x1b[90m{} {}\x1b[0m", tag, ach.name);
+            let _ = writeln!(frame, "\x1b[90m    Condición: {}\x1b[0m", ach.description);
+            let _ = writeln!(frame, "\x1b[90m    \"{}\"\x1b[0m", ach.lore);
+        }
     }
 
     let _ = writeln!(frame, "------------------------------------------------------------");
@@ -488,7 +532,12 @@ pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConf
         "--------------------------------------------------------------------------------"
     );
 
+    let mut any_revealed = false;
     for (index, upgrade) in upgrades.iter().enumerate() {
+        if !state.is_permanent_upgrade_revealed(upgrade.id) {
+            continue;
+        }
+        any_revealed = true;
         let key = index + 1;
         let status = if state.has_permanent_upgrade(upgrade.id) {
             "[COMPRADA]".to_string()
@@ -507,6 +556,13 @@ pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConf
         );
         let _ = writeln!(frame, "    Efecto: {desc}", desc = upgrade.description);
         let _ = writeln!(frame, "    \"{lore}\"", lore = upgrade.lore);
+    }
+
+    if !any_revealed {
+        let _ = writeln!(
+            frame,
+            "    (Reúne más Epifanías en una Crisis Existencial para descubrir mejoras permanentes)"
+        );
     }
 
     let _ = writeln!(
@@ -740,22 +796,32 @@ mod tests {
         let mut state = GameState::new();
         state.sloth_points = 12.5;
         state.activities[0].progress = 2.5;
+        state.check_reveals();
 
         let frame = render_game_frame(&state, 10, 0);
-        assert!(frame.contains("Puntos: 12.50 | Epifanías Zen: 0 (+0%) | Logros: +0.0%"));
+        // Prestige is not revealed yet: header has points & achievements, no epiphanies
+        assert!(frame.contains("Puntos: 12.50 | Logros: +0.0%"));
+        assert!(!frame.contains("Epifanías Zen:"));
+
+        // Activity 0 and 1 are revealed, activities 2-4 are hidden
         assert!(frame.contains("[1] Esperar a que cargue la barrita [Lvl. 1 / Hito: 25]"));
-        assert!(frame.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
         assert!(frame.contains("[█████     ] 50% Faltan 2.50s | +1.00 pts"));
         assert!(frame.contains("[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"));
-        assert!(frame.contains("\"Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.\""));
-        assert!(frame.contains("[3] [BLOQUEADO] Hacer scroll infinito sin ver nada -> Desbloquear: Cuesta 25.00 pts [Presiona 3]"));
-        assert!(frame.contains("\"Solo cinco minutitos más... susurró hace cuatro horas y media.\""));
-        assert!(frame.contains("[4] [BLOQUEADO] Abrir la refri vacía por quinta vez -> Desbloquear: Cuesta 100.00 pts [Presiona 4]"));
-        assert!(frame.contains("\"Quizás apareció una pizza por generación espontánea en los últimos 3 minutos.\""));
-        assert!(frame.contains("[5] [BLOQUEADO] Ordenar el escritorio para no trabajar -> Desbloquear: Cuesta 350.00 pts [Presiona 5]"));
-        assert!(frame.contains("\"Increíble cómo organizar cables se vuelve prioridad cuando hay pendientes.\""));
-        assert!(frame.contains("[P] CRISIS EXISTENCIAL -> Reclamar +0 Epifanías (Histórico: 0.00 pts)"));
-        assert!(frame.contains("[ESPACIO] Lapicero / Reclamar | [1-5] Subir Nivel | [U] Mejoras | [S] Estadísticas | [A] Logros | [Q] Salir"));
+        assert!(!frame.contains("[3] [BLOQUEADO]"));
+        assert!(!frame.contains("[4] [BLOQUEADO]"));
+        assert!(!frame.contains("[5] [BLOQUEADO]"));
+
+        // Prestige prompt and menu shortcuts are hidden
+        assert!(!frame.contains("[P] CRISIS EXISTENCIAL"));
+        assert!(frame.contains("[ESPACIO] Lapicero / Reclamar | [1-2] Subir Nivel | [S] Estadísticas | [A] Logros | [Q] Salir"));
+
+        // Now earn enough for prestige (4000 historic points = 2 Epiphanies)
+        state.lifetime_sloth_points = 4000.0;
+        state.check_reveals();
+        let frame_with_prestige = render_game_frame(&state, 10, 0);
+        assert!(frame_with_prestige.contains("Epifanías Zen: 0 (+0%)"));
+        assert!(frame_with_prestige.contains("[P] CRISIS EXISTENCIAL -> Reclamar +2 Epifanías"));
+        assert!(frame_with_prestige.contains("[P] Crisis | [U] Mejoras"));
     }
 
     #[test]
@@ -763,14 +829,22 @@ mod tests {
         let mut state = GameState::new();
         state.frenzy_multiplier = 7.0;
         state.frenzy_timer = 18.5;
+        state.frenzy_max_duration = 25.0;
         state.last_pen_sound = Some("*¡Crack!*".to_string());
+        state.last_claimed_distraction = Some(game_core::ClaimedDistractionFeedback {
+            title: "Meme del Grupo".to_string(),
+            description: "Desc".to_string(),
+            effect_summary: "+200.00 Puntos de Flojera al instante".to_string(),
+        });
         state.active_distraction = Some(game_core::ActiveDistractionState::new(
             game_core::default_distractions()[0].clone(),
         ));
 
         let frame = render_game_frame(&state, 20, 0);
-        assert!(frame.contains("⚡ ¡FRENESÍ DE FLOJERA ACTIVO! x7.0 (18.5s restantes)"));
+        assert!(frame.contains("⚡ ¡FRENESÍ DE FLOJERA ACTIVO! ["));
+        assert!(frame.contains("x7.0 (18.5s restantes)"));
         assert!(frame.contains("🖊️ Lapicero: *¡Crack!*"));
+        assert!(frame.contains("🎁 Última distracción: Meme del Grupo -> +200.00 Puntos de Flojera al instante"));
         assert!(frame.contains("📱 ¡DISTRACCIÓN INESPERADA!: Video de Restauración"));
         assert!(frame.contains("Frenesí x7.0 por 25s"));
         assert!(frame.contains(">>> [ESPACIO / D] ¡Reclamar Distracción! <<<"));
@@ -829,6 +903,7 @@ mod tests {
         assert!(frame.contains("[DESBLOQUEADO (+1.5%)] El Comienzo del Fin"));
         assert!(frame.contains("\"Cualquier viaje de mil millas empieza sin levantarse del sillón.\""));
         assert!(frame.contains("[BLOQUEADO] Síndrome del Resorte"));
+        assert!(frame.contains("\x1b[90m[BLOQUEADO] Síndrome del Resorte\x1b[0m"));
         assert!(frame.contains("[A / Esc] Volver al tablero principal"));
     }
 
@@ -856,24 +931,32 @@ mod tests {
         let mut state = GameState::new();
         state.epiphanies = 2;
         state.total_epiphanies_earned = 2;
+        state.check_reveals();
         let upgrades = game_core::default_permanent_upgrades();
 
         let frame = render_upgrades_frame(&state, &upgrades);
         assert!(frame.contains("=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ==="));
         assert!(frame.contains("Epifanías disponibles: 2 | Total ganadas: 2 | Bono Producción: +20%"));
-        // muscle_memory costs 2: should be available to buy
+        // muscle_memory costs 2: should be revealed and available to buy
         assert!(frame.contains("[1] Memoria Muscular - Costo: 2 Epifanías [COMPRAR - Presiona 1]"));
         assert!(frame.contains("Efecto: La primera actividad inicia en Nivel 10 tras reiniciar."));
         assert!(frame.contains("\"Tu mano ya abre pestañas de ocio por reflejo involuntario.\""));
 
-        // cost_optimization costs 5: should be locked (missing 3)
-        assert!(frame.contains("[2] Optimización del Desgano - Costo: 5 Epifanías [BLOQUEADO - Faltan 3 Epifanías]"));
-        assert!(frame.contains("Efecto: Los niveles de actividades escalan con costo 1.12 en vez de 1.15."));
-        assert!(frame.contains("\"Descubriste métodos para rendir aún menos con menor esfuerzo.\""));
+        // cost_optimization costs 5: should NOT be revealed yet
+        assert!(!frame.contains("Optimización del Desgano"));
 
-        // Now buy muscle_memory
+        // Now earn 5 Epiphanies -> cost_optimization is revealed
+        state.epiphanies = 5;
+        state.check_reveals();
+        let frame_with_5 = render_upgrades_frame(&state, &upgrades);
+        assert!(frame_with_5.contains("Optimización del Desgano"));
+
+        // Buy muscle_memory (cost 2) -> 3 Epiphanies remain
         assert!(state.buy_permanent_upgrade("muscle_memory"));
+        assert_eq!(state.epiphanies, 3);
         let frame_after = render_upgrades_frame(&state, &upgrades);
         assert!(frame_after.contains("[1] Memoria Muscular - Costo: 2 Epifanías [COMPRADA]"));
+        // cost_optimization was previously revealed, so it STAYS revealed as blocked
+        assert!(frame_after.contains("[2] Optimización del Desgano - Costo: 5 Epifanías [BLOQUEADO - Faltan 2 Epifanías]"));
     }
 }
