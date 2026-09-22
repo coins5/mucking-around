@@ -1,9 +1,14 @@
 #![forbid(unsafe_code)]
 
+pub mod prestige;
 pub mod roster;
 
+use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
+pub use prestige::{
+    default_permanent_upgrades, PermanentUpgradeConfig, PrestigeConfig,
+};
 pub use roster::{default_milestones, default_roster, ActivityConfig, Milestone};
 
 /// Extensible identifier for in-game resources.
@@ -104,6 +109,20 @@ pub struct ActivityState {
     pub progress: f64,
     /// Current level of the activity (0 indicates locked, >= 1 is active).
     pub level: u32,
+    /// Divisor applied to base duration (e.g. 1.25 for eternal_sloth -20% duration).
+    #[serde(default = "default_duration_divisor")]
+    pub duration_divisor: f64,
+    /// Exponent applied to cost scaling (e.g. 1.12 for cost_optimization, default 1.15).
+    #[serde(default = "default_cost_exponent")]
+    pub cost_exponent: f64,
+}
+
+fn default_duration_divisor() -> f64 {
+    1.0
+}
+
+fn default_cost_exponent() -> f64 {
+    1.15
 }
 
 impl ActivityState {
@@ -116,6 +135,8 @@ impl ActivityState {
             config,
             progress: 0.0,
             level,
+            duration_divisor: 1.0,
+            cost_exponent: 1.15,
         }
     }
 
@@ -127,7 +148,7 @@ impl ActivityState {
 
     /// Returns the cost for the next upgrade (or initial unlock if level is 0).
     /// - If `level == 0`: returns `config.cost`.
-    /// - If `level > 0`: returns `base_cost * 1.15^level` (where `base_cost = if cost <= 0.0 { 1.0 } else { cost }`).
+    /// - If `level > 0`: returns `base_cost * cost_exponent^level` (where `base_cost = if cost <= 0.0 { 1.0 } else { cost }`).
     #[must_use]
     pub fn next_cost(&self) -> f64 {
         if self.level == 0 {
@@ -138,7 +159,12 @@ impl ActivityState {
             } else {
                 self.config.cost
             };
-            base_cost * 1.15_f64.powi(self.level as i32)
+            let exponent = if self.cost_exponent.is_finite() && self.cost_exponent > 0.0 {
+                self.cost_exponent
+            } else {
+                1.15
+            };
+            base_cost * exponent.powi(self.level as i32)
         }
     }
 
@@ -177,15 +203,21 @@ impl ActivityState {
         self.config.reward * (self.level as f64) * self.milestone_multiplier()
     }
 
-    /// Returns the effective cycle duration considering speed milestones:
-    /// `(config.duration / speed_multiplier()).max(0.005)`.
+    /// Returns the effective cycle duration considering speed milestones and duration divisor:
+    /// `((config.duration / duration_divisor) / speed_multiplier()).max(0.005)`.
     #[must_use]
     pub fn current_duration(&self) -> f64 {
         let mult = self.speed_multiplier();
-        if !mult.is_finite() || mult <= 0.0 {
-            self.config.duration.max(0.005)
+        let divisor = if self.duration_divisor.is_finite() && self.duration_divisor > 0.0 {
+            self.duration_divisor
         } else {
-            (self.config.duration / mult).max(0.005)
+            1.0
+        };
+        let base_duration = self.config.duration / divisor;
+        if !mult.is_finite() || mult <= 0.0 {
+            base_duration.max(0.005)
+        } else {
+            (base_duration / mult).max(0.005)
         }
     }
 
@@ -232,19 +264,35 @@ impl ActivityState {
 }
 
 /// Explicit action intent to drive deterministic state mutations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     /// Attempt to upgrade/unlock an activity at the given roster index.
     UpgradeActivity(usize),
     /// Legacy alias for unlocking/upgrading an activity.
     UnlockActivity(usize),
+    /// Trigger an existential crisis (prestige) to claim Epiphanies.
+    TriggerPrestige,
+    /// Buy a permanent upgrade by its unique identifier.
+    BuyPermanentUpgrade(String),
 }
 
-/// The game state managing procrastination activities and Sloth Points.
+/// The game state managing procrastination activities, Sloth Points, and Epiphanies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameState {
     /// Current balance of Sloth Points ("Puntos de Flojera").
     pub sloth_points: f64,
+    /// Lifetime historic Sloth Points accumulated across all prestiges.
+    pub lifetime_sloth_points: f64,
+    /// Current balance of unspent Epiphanies ("Epifanías").
+    pub epiphanies: u32,
+    /// Total lifetime Epiphanies earned across all prestiges.
+    pub total_epiphanies_earned: u32,
+    /// Set of unique identifiers of purchased permanent upgrades.
+    pub purchased_permanent_upgrades: HashSet<String>,
+    /// Configuration for the prestige scaling formulas and bonus.
+    pub prestige_config: PrestigeConfig,
+    /// Accumulated delta time in seconds for the autopilot upgrade.
+    pub autopilot_timer: f64,
     /// Dynamic state of all activities in the roster.
     pub activities: Vec<ActivityState>,
 }
@@ -256,13 +304,19 @@ impl Default for GameState {
 }
 
 impl GameState {
-    /// Initializes a new game state with the default roster.
+    /// Initializes a new game state with default configurations and roster.
     /// The first activity starts at level 1 (unlocked), the rest at level 0 (locked).
     #[must_use]
     pub fn new() -> Self {
         let activities = default_roster().into_iter().map(ActivityState::new).collect();
         Self {
             sloth_points: 0.0,
+            lifetime_sloth_points: 0.0,
+            epiphanies: 0,
+            total_epiphanies_earned: 0,
+            purchased_permanent_upgrades: HashSet::new(),
+            prestige_config: PrestigeConfig::default(),
+            autopilot_timer: 0.0,
             activities,
         }
     }
@@ -289,25 +343,185 @@ impl GameState {
         self.upgrade_activity(index)
     }
 
+    /// Returns the number of Epiphanies that can currently be claimed via prestige.
+    ///
+    /// Formula:
+    /// `total = floor((lifetime_sloth_points / base_cost)^exponent)`
+    /// Returns `total.saturating_sub(total_epiphanies_earned)`.
+    #[must_use]
+    pub fn claimable_epiphanies(&self) -> u32 {
+        if !self.lifetime_sloth_points.is_finite()
+            || self.lifetime_sloth_points <= 0.0
+            || !self.prestige_config.base_cost.is_finite()
+            || self.prestige_config.base_cost <= 0.0
+        {
+            return 0;
+        }
+
+        let ratio = self.lifetime_sloth_points / self.prestige_config.base_cost;
+        let raw_total = ratio.powf(self.prestige_config.exponent).floor();
+        let total = if raw_total.is_finite() && raw_total > 0.0 {
+            raw_total.min(u32::MAX as f64) as u32
+        } else {
+            0
+        };
+
+        total.saturating_sub(self.total_epiphanies_earned)
+    }
+
+    /// Returns the global production multiplier derived from unspent Epiphanies.
+    ///
+    /// Checks if the player owns "zen_enlightenment":
+    /// - With upgrade: +15% per point (bonus = 0.15)
+    /// - Without upgrade: +10% per point (config.default_bonus_per_point)
+    ///
+    /// Returns `1.0 + (epiphanies * bonus)`.
+    #[must_use]
+    pub fn prestige_multiplier(&self) -> f64 {
+        let bonus = if self.has_permanent_upgrade("zen_enlightenment") {
+            0.15
+        } else {
+            self.prestige_config.default_bonus_per_point
+        };
+        1.0 + (self.epiphanies as f64 * bonus)
+    }
+
+    /// Returns whether a permanent upgrade with the given ID has been purchased.
+    #[must_use]
+    pub fn has_permanent_upgrade(&self, id: &str) -> bool {
+        self.purchased_permanent_upgrades.contains(id)
+    }
+
+    /// Attempts to purchase a permanent upgrade using Epiphanies.
+    ///
+    /// If the player has sufficient Epiphanies and has not already bought it:
+    /// deducts the cost, records the purchase, applies upgrade effects, and returns `true`.
+    /// Returns `false` otherwise.
+    pub fn buy_permanent_upgrade(&mut self, id: &str) -> bool {
+        if self.has_permanent_upgrade(id) {
+            return false;
+        }
+
+        let roster = default_permanent_upgrades();
+        if let Some(upgrade) = roster.iter().find(|u| u.id == id && self.epiphanies >= u.cost_epiphanies) {
+            self.epiphanies -= upgrade.cost_epiphanies;
+            self.purchased_permanent_upgrades.insert(id.to_string());
+            self.apply_permanent_upgrade_effects();
+            return true;
+        }
+
+        false
+    }
+
+    /// Applies active permanent upgrade effects to all activities.
+    pub fn apply_permanent_upgrade_effects(&mut self) {
+        let duration_divisor = if self.has_permanent_upgrade("eternal_sloth") {
+            1.25
+        } else {
+            1.0
+        };
+        let cost_exponent = if self.has_permanent_upgrade("cost_optimization") {
+            1.12
+        } else {
+            1.15
+        };
+
+        for activity in &mut self.activities {
+            activity.duration_divisor = duration_divisor;
+            activity.cost_exponent = cost_exponent;
+        }
+    }
+
+    /// Triggers an Existential Crisis (Prestige reset).
+    ///
+    /// If `claimable_epiphanies() == 0`, returns `false`.
+    /// Otherwise:
+    /// - Adds claimed Epiphanies to `epiphanies` and `total_epiphanies_earned`.
+    /// - Resets `sloth_points` to 0.0.
+    /// - If the player has "muscle_memory", Activity 0 begins at level 10, otherwise 1.
+    /// - Remaining activities are reset to level 0 (locked).
+    /// - All activity cycle progress is reset to 0.0.
+    /// - Resets `autopilot_timer` to 0.0.
+    /// - Re-applies active permanent upgrade effects.
+    /// - Returns `true`.
+    pub fn trigger_prestige(&mut self) -> bool {
+        let to_claim = self.claimable_epiphanies();
+        if to_claim == 0 {
+            return false;
+        }
+
+        self.epiphanies += to_claim;
+        self.total_epiphanies_earned += to_claim;
+        self.sloth_points = 0.0;
+        self.autopilot_timer = 0.0;
+
+        let first_level = if self.has_permanent_upgrade("muscle_memory") {
+            10
+        } else {
+            1
+        };
+
+        for (index, activity) in self.activities.iter_mut().enumerate() {
+            activity.level = if index == 0 { first_level } else { 0 };
+            activity.progress = 0.0;
+        }
+
+        self.apply_permanent_upgrade_effects();
+        true
+    }
+
+    /// Attempts to buy 1 level of the unlocked activity with the lowest upgrade cost.
+    pub fn buy_cheapest_unlocked_activity(&mut self) -> bool {
+        let cheapest_index = self
+            .activities
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.is_unlocked())
+            .min_by(|(_, a), (_, b)| a.next_cost().total_cmp(&b.next_cost()))
+            .map(|(i, _)| i);
+
+        if let Some(index) = cheapest_index {
+            self.upgrade_activity(index)
+        } else {
+            false
+        }
+    }
+
     /// Handles an explicit player action intent.
     pub fn handle_action(&mut self, action: Action) -> bool {
         match action {
             Action::UpgradeActivity(index) | Action::UnlockActivity(index) => {
                 self.upgrade_activity(index)
             }
+            Action::TriggerPrestige => self.trigger_prestige(),
+            Action::BuyPermanentUpgrade(id) => self.buy_permanent_upgrade(&id),
         }
     }
 
     /// Advances the simulation by `dt` seconds deterministically.
     ///
-    /// Only unlocked activities (`level > 0`) advance their progress.
-    /// When an activity completes (`progress >= current_duration()`), its reward
-    /// (`current_reward()`) is added to `sloth_points` and any remainder is preserved.
+    /// - Applies permanent upgrade effects.
+    /// - If "autopilot" is owned, advances `autopilot_timer` and buys cheapest unlocked activity every 2.0s.
+    /// - Progresses unlocked activities; completed cycles award `current_reward * cycles * prestige_multiplier()`.
+    /// - Awards are added to both `sloth_points` and `lifetime_sloth_points`.
     pub fn tick(&mut self, dt: f64) {
         if !dt.is_finite() || dt <= 0.0 {
             return;
         }
 
+        self.apply_permanent_upgrade_effects();
+
+        if self.has_permanent_upgrade("autopilot") {
+            self.autopilot_timer += dt;
+            while self.autopilot_timer >= 2.0 {
+                self.autopilot_timer -= 2.0;
+                self.buy_cheapest_unlocked_activity();
+            }
+        } else {
+            self.autopilot_timer = 0.0;
+        }
+
+        let mult = self.prestige_multiplier();
         for activity in &mut self.activities {
             if activity.level == 0 {
                 continue;
@@ -323,8 +537,9 @@ impl GameState {
             let cycles = (activity.progress / duration).floor();
             if cycles > 0.0 {
                 activity.progress -= cycles * duration;
-                let gained = activity.current_reward() * cycles;
+                let gained = activity.current_reward() * cycles * mult;
                 self.sloth_points += gained;
+                self.lifetime_sloth_points += gained;
             }
 
             // Ensure progress is clamped to prevent negative precision drift or overflow
@@ -493,15 +708,15 @@ mod tests {
         assert_eq!(state.activities[0].speed_multiplier(), 16.0);
         assert_eq!(state.activities[0].current_duration(), 0.3125);
 
-        // Level 500: 32.0x -> duration = 0.15625s
+        // Level 500: 64.0x -> duration = 5.0 / 64.0
         state.activities[0].level = 500;
-        assert_eq!(state.activities[0].speed_multiplier(), 32.0);
-        assert_eq!(state.activities[0].current_duration(), 0.15625);
-
-        // Level 1000: 64.0x -> duration = 5.0 / 64.0 = 0.078125s (Turbo mode active)
-        state.activities[0].level = 1000;
         assert_eq!(state.activities[0].speed_multiplier(), 64.0);
-        assert_eq!(state.activities[0].current_duration(), 0.078125);
+        assert_eq!(state.activities[0].current_duration(), 5.0 / 64.0);
+
+        // Level 1000: 128.0x -> duration = 5.0 / 128.0 = 0.0390625s (Turbo mode active)
+        state.activities[0].level = 1000;
+        assert_eq!(state.activities[0].speed_multiplier(), 128.0);
+        assert_eq!(state.activities[0].current_duration(), 5.0 / 128.0);
         assert!(state.activities[0].is_turbo());
 
         // Level 5000: 256.0x -> duration = 5.0 / 256.0 = 0.01953125s
@@ -509,9 +724,9 @@ mod tests {
         assert_eq!(state.activities[0].speed_multiplier(), 256.0);
         assert_eq!(state.activities[0].current_duration(), 0.01953125);
 
-        // Level 9999: 1000.0x -> 5.0 / 1000.0 = 0.005s (.max(0.005))
+        // Level 9999: 1024.0x -> (5.0 / 1024.0).max(0.005) = 0.005s (.max(0.005))
         state.activities[0].level = 9999;
-        assert_eq!(state.activities[0].speed_multiplier(), 1000.0);
+        assert_eq!(state.activities[0].speed_multiplier(), 1024.0);
         assert_eq!(state.activities[0].current_duration(), 0.005);
         assert!(state.activities[0].next_milestone().is_none());
 
@@ -648,6 +863,196 @@ mod tests {
         assert!(state.handle_action(Action::UnlockActivity(1)));
         assert_eq!(state.activities[1].level, 2);
         assert!((state.sloth_points - (15.0 - 5.75)).abs() < EPSILON);
+
+        // Test action TriggerPrestige
+        state.lifetime_sloth_points = 1000.0;
+        assert_eq!(state.claimable_epiphanies(), 1);
+        assert!(state.handle_action(Action::TriggerPrestige));
+        assert_eq!(state.epiphanies, 1);
+
+        // Test action BuyPermanentUpgrade
+        assert!(!state.handle_action(Action::BuyPermanentUpgrade("muscle_memory".to_string())));
+        state.epiphanies = 2;
+        assert!(state.handle_action(Action::BuyPermanentUpgrade("muscle_memory".to_string())));
+        assert!(state.has_permanent_upgrade("muscle_memory"));
+    }
+
+    #[test]
+    fn test_claimable_epiphanies_math() {
+        let mut state = GameState::new();
+        // default config: base_cost = 1000.0, exponent = 0.50
+        assert_eq!(state.claimable_epiphanies(), 0);
+
+        state.lifetime_sloth_points = 999.0;
+        assert_eq!(state.claimable_epiphanies(), 0);
+
+        state.lifetime_sloth_points = 1000.0;
+        assert_eq!(state.claimable_epiphanies(), 1);
+
+        state.lifetime_sloth_points = 3999.0;
+        assert_eq!(state.claimable_epiphanies(), 1);
+
+        state.lifetime_sloth_points = 4000.0;
+        assert_eq!(state.claimable_epiphanies(), 2);
+
+        state.lifetime_sloth_points = 9000.0;
+        assert_eq!(state.claimable_epiphanies(), 3);
+
+        // Deduct already earned epiphanies
+        state.total_epiphanies_earned = 2;
+        assert_eq!(state.claimable_epiphanies(), 1);
+
+        state.total_epiphanies_earned = 3;
+        assert_eq!(state.claimable_epiphanies(), 0);
+
+        state.total_epiphanies_earned = 5;
+        assert_eq!(state.claimable_epiphanies(), 0);
+    }
+
+    #[test]
+    fn test_prestige_multiplier() {
+        let mut state = GameState::new();
+        assert!((state.prestige_multiplier() - 1.0).abs() < EPSILON);
+
+        state.epiphanies = 10;
+        // Default bonus = 0.10: 1.0 + 10 * 0.10 = 2.0 (+100%)
+        assert!((state.prestige_multiplier() - 2.0).abs() < EPSILON);
+
+        // With zen_enlightenment bonus = 0.15: 1.0 + 10 * 0.15 = 2.5 (+150%)
+        state.purchased_permanent_upgrades.insert("zen_enlightenment".to_string());
+        assert!((state.prestige_multiplier() - 2.5).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_buy_permanent_upgrade() {
+        let mut state = GameState::new();
+        state.epiphanies = 5;
+
+        // muscle_memory costs 2
+        assert!(!state.has_permanent_upgrade("muscle_memory"));
+        assert!(state.buy_permanent_upgrade("muscle_memory"));
+        assert!(state.has_permanent_upgrade("muscle_memory"));
+        assert_eq!(state.epiphanies, 3);
+
+        // Cannot buy already purchased upgrade
+        assert!(!state.buy_permanent_upgrade("muscle_memory"));
+        assert_eq!(state.epiphanies, 3);
+
+        // Cannot buy upgrade without enough epiphanies (cost_optimization costs 5)
+        assert!(!state.buy_permanent_upgrade("cost_optimization"));
+        assert!(!state.has_permanent_upgrade("cost_optimization"));
+        assert_eq!(state.epiphanies, 3);
+
+        // Unknown upgrade id returns false
+        assert!(!state.buy_permanent_upgrade("non_existent"));
+    }
+
+    #[test]
+    fn test_trigger_prestige() {
+        let mut state = GameState::new();
+        state.sloth_points = 500.0;
+        state.lifetime_sloth_points = 500.0;
+
+        // Claimable is 0 (< 1000.0) -> trigger_prestige returns false and does nothing
+        assert!(!state.trigger_prestige());
+        assert!((state.sloth_points - 500.0).abs() < EPSILON);
+        assert_eq!(state.epiphanies, 0);
+
+        // Level up activity 0 and 1
+        state.activities[0].level = 5;
+        state.activities[0].progress = 2.0;
+        state.activities[1].level = 3;
+        state.activities[1].progress = 1.0;
+
+        state.lifetime_sloth_points = 4000.0; // gives 2 epiphanies
+        assert_eq!(state.claimable_epiphanies(), 2);
+
+        assert!(state.trigger_prestige());
+        assert_eq!(state.epiphanies, 2);
+        assert_eq!(state.total_epiphanies_earned, 2);
+        assert_eq!(state.sloth_points, 0.0);
+        assert_eq!(state.lifetime_sloth_points, 4000.0);
+
+        // Activity 0 resets to level 1, activity 1 resets to 0 (locked), all progress to 0.0
+        assert_eq!(state.activities[0].level, 1);
+        assert_eq!(state.activities[0].progress, 0.0);
+        assert_eq!(state.activities[1].level, 0);
+        assert_eq!(state.activities[1].progress, 0.0);
+    }
+
+    #[test]
+    fn test_muscle_memory_effect() {
+        let mut state = GameState::new();
+        state.lifetime_sloth_points = 1000.0;
+        state.purchased_permanent_upgrades.insert("muscle_memory".to_string());
+
+        assert!(state.trigger_prestige());
+        // Activity 0 should start at level 10 with muscle_memory
+        assert_eq!(state.activities[0].level, 10);
+        assert_eq!(state.activities[1].level, 0);
+    }
+
+    #[test]
+    fn test_cost_optimization_effect() {
+        let mut state = GameState::new();
+        state.activities[0].level = 2;
+
+        // Base cost is 1.0, level 2 cost without optimization: 1.0 * 1.15^2 = 1.3225
+        assert!((state.activities[0].next_cost() - 1.3225).abs() < EPSILON);
+
+        // Buy cost_optimization
+        state.epiphanies = 10;
+        assert!(state.buy_permanent_upgrade("cost_optimization"));
+
+        // Level 2 cost with optimization: 1.0 * 1.12^2 = 1.2544
+        assert_eq!(state.activities[0].cost_exponent, 1.12);
+        assert!((state.activities[0].next_cost() - 1.2544).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_eternal_sloth_effect() {
+        let mut state = GameState::new();
+        // Activity 0 duration is 5.0s
+        assert_eq!(state.activities[0].current_duration(), 5.0);
+
+        // Buy eternal_sloth (reduces duration by 20%, divide by 1.25 -> 5.0 / 1.25 = 4.0s)
+        state.epiphanies = 20;
+        assert!(state.buy_permanent_upgrade("eternal_sloth"));
+
+        assert_eq!(state.activities[0].duration_divisor, 1.25);
+        assert_eq!(state.activities[0].current_duration(), 4.0);
+    }
+
+    #[test]
+    fn test_autopilot_effect() {
+        let mut state = GameState::new();
+        state.epiphanies = 50;
+        assert!(state.buy_permanent_upgrade("autopilot"));
+
+        // Activity 0 is level 1 (cost 1.15)
+        state.sloth_points = 10.0;
+
+        // Tick 1.0s: autopilot_timer = 1.0 (< 2.0), no purchase yet
+        state.tick(1.0);
+        assert!((state.autopilot_timer - 1.0).abs() < EPSILON);
+        assert_eq!(state.activities[0].level, 1);
+
+        // Tick another 1.0s: autopilot_timer reaches 2.0, triggers purchase of cheapest unlocked (activity 0)
+        state.tick(1.0);
+        assert_eq!(state.activities[0].level, 2);
+        assert!((state.autopilot_timer - 0.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_prestige_multiplies_rewards() {
+        let mut state = GameState::new();
+        state.epiphanies = 10; // multiplier = 1.0 + 10 * 0.10 = 2.0
+
+        // Activity 0 takes 5.0s to complete, base reward = 1.0
+        // When completed with 2.0x multiplier, awards 2.0 points to sloth_points and lifetime
+        state.tick(5.0);
+        assert!((state.sloth_points - 2.0).abs() < EPSILON);
+        assert!((state.lifetime_sloth_points - 2.0).abs() < EPSILON);
     }
 
     #[test]
@@ -660,6 +1065,8 @@ mod tests {
         assert_traits::<Milestone>();
         assert_traits::<ActivityConfig>();
         assert_traits::<ActivityState>();
+        assert_traits::<PrestigeConfig>();
+        assert_traits::<PermanentUpgradeConfig>();
         assert_traits::<Action>();
         assert_traits::<GameState>();
     }

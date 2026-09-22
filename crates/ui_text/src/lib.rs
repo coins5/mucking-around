@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use game_core::{ActivityState, GameState, Generator, ResourceId};
+use game_core::{ActivityState, GameState, Generator, PermanentUpgradeConfig, ResourceId};
 use thiserror::Error;
 
 /// Domain errors for text rendering operations.
@@ -224,20 +224,91 @@ pub fn format_activity_line(
 
 /// Renders the complete multi-bar text frame for the procrastination game.
 ///
-/// Header displays total balance: `Puntos de Flojera: XX.XX`.
-/// Following lines display the formatted state of each activity in the roster.
+/// Header displays balance, Epiphanies, and production multiplier:
+/// `Puntos: XX.XX | Epifanías Zen: X (Bono: +XX%)`.
+/// Following lines display the formatted state of each activity in the roster,
+/// and a bottom section displays Crisis Existencial status and permanent upgrades menu shortcut.
 #[must_use]
 pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -> String {
     let estimated_line_len = bar_width * 4 + 140;
-    let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 128);
+    let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 256);
 
-    let _ = writeln!(frame, "Puntos de Flojera: {:.2}", state.sloth_points);
+    let bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
+    let _ = writeln!(
+        frame,
+        "Puntos: {:.2} | Epifanías Zen: {} (Bono: +{}%)",
+        state.sloth_points, state.epiphanies, bonus_pct
+    );
     let _ = writeln!(frame, "------------------------------------------------------------");
 
     for (index, activity) in state.activities.iter().enumerate() {
         let line = format_activity_line(activity, index, bar_width, frame_seed);
         let _ = writeln!(frame, "{line}");
     }
+
+    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "[P] CRISIS EXISTENCIAL -> Reclamar +{} Epifanías (Histórico: {:.2} pts)",
+        state.claimable_epiphanies(),
+        state.lifetime_sloth_points
+    );
+    let _ = writeln!(
+        frame,
+        "[U] Menú de Iluminación (Mejoras Permanentes con Epifanías)"
+    );
+
+    frame
+}
+
+/// Renders the permanent upgrades shop frame for Epiphanies.
+///
+/// Displays current unspent Epiphanies balance, total earned, current production multiplier,
+/// and list of permanent upgrades with their status:
+/// - `[COMPRADO]` if already owned.
+/// - `[COMPRAR - Presiona {key}]` if purchasable.
+/// - `[BLOQUEADO - Faltan {n} Epifanías]` if insufficient Epiphanies.
+#[must_use]
+pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConfig]) -> String {
+    let mut frame = String::with_capacity(upgrades.len() * 160 + 256);
+    let bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
+
+    let _ = writeln!(frame, "=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ===");
+    let _ = writeln!(
+        frame,
+        "Epifanías disponibles: {} | Total ganadas: {} | Bono Producción: +{}%",
+        state.epiphanies, state.total_epiphanies_earned, bonus_pct
+    );
+    let _ = writeln!(
+        frame,
+        "--------------------------------------------------------------------------------"
+    );
+
+    for (index, upgrade) in upgrades.iter().enumerate() {
+        let key = index + 1;
+        let status = if state.has_permanent_upgrade(upgrade.id) {
+            "[COMPRADO]".to_string()
+        } else if state.epiphanies >= upgrade.cost_epiphanies {
+            format!("[COMPRAR - Presiona {key}]")
+        } else {
+            let needed = upgrade.cost_epiphanies.saturating_sub(state.epiphanies);
+            format!("[BLOQUEADO - Faltan {needed} Epifanías]")
+        };
+
+        let _ = writeln!(
+            frame,
+            "[{key}] {name} (Costo: {cost} Epifanías) {status}",
+            name = upgrade.name,
+            cost = upgrade.cost_epiphanies
+        );
+        let _ = writeln!(frame, "    {desc}", desc = upgrade.description);
+    }
+
+    let _ = writeln!(
+        frame,
+        "--------------------------------------------------------------------------------"
+    );
+    let _ = writeln!(frame, "[U] Volver al juego principal");
 
     frame
 }
@@ -434,7 +505,7 @@ mod tests {
     #[test]
     fn test_format_activity_line_turbo() {
         let mut state = GameState::new();
-        // Set activity 0 to level 1000 where speed_multiplier is 64x -> duration = 5.0 / 64.0 = 0.078125s (Turbo)
+        // Set activity 0 to level 1000 where speed_multiplier is 128x -> duration = 5.0 / 128.0 = 0.0390625s (Turbo)
         state.activities[0].level = 1000;
         assert!(state.activities[0].is_turbo());
 
@@ -443,7 +514,7 @@ mod tests {
         assert!(line.contains("Esperar a que cargue la barrita"));
         assert!(line.contains("⚡ TURBO:"));
         assert!(line.contains("pts/seg"));
-        assert!(line.contains("64.0x vel"));
+        assert!(line.contains("128.0x vel"));
         assert!(line.contains("Subir a Lvl. 1001:"));
     }
 
@@ -456,7 +527,7 @@ mod tests {
         let line = format_activity_line(&state.activities[0], 0, 12, 0);
         assert!(line.contains("[Lvl. 9999 - MAX]"));
         assert!(line.contains("⚡ TURBO:"));
-        assert!(line.contains("1000.0x vel"));
+        assert!(line.contains("1024.0x vel"));
     }
 
     #[test]
@@ -468,7 +539,7 @@ mod tests {
         let frame = render_game_frame(&state, 10, 0);
         let lines: Vec<&str> = frame.lines().collect();
 
-        assert_eq!(lines[0], "Puntos de Flojera: 12.50");
+        assert_eq!(lines[0], "Puntos: 12.50 | Epifanías Zen: 0 (Bono: +0%)");
         assert_eq!(lines[1], "------------------------------------------------------------");
         assert_eq!(
             lines[2],
@@ -490,5 +561,35 @@ mod tests {
             lines[6],
             "[BLOQUEADO] Ordenar el escritorio para no trabajar -> Desbloquear [5]: Cuesta 350.00 pts"
         );
+        assert_eq!(lines[7], "------------------------------------------------------------");
+        assert_eq!(
+            lines[8],
+            "[P] CRISIS EXISTENCIAL -> Reclamar +0 Epifanías (Histórico: 0.00 pts)"
+        );
+        assert_eq!(
+            lines[9],
+            "[U] Menú de Iluminación (Mejoras Permanentes con Epifanías)"
+        );
+    }
+
+    #[test]
+    fn test_render_upgrades_frame() {
+        let mut state = GameState::new();
+        state.epiphanies = 2;
+        state.total_epiphanies_earned = 2;
+        let upgrades = game_core::default_permanent_upgrades();
+
+        let frame = render_upgrades_frame(&state, &upgrades);
+        assert!(frame.contains("=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ==="));
+        assert!(frame.contains("Epifanías disponibles: 2 | Total ganadas: 2 | Bono Producción: +20%"));
+        // muscle_memory costs 2: should be available to buy
+        assert!(frame.contains("[1] Memoria Muscular (Costo: 2 Epifanías) [COMPRAR - Presiona 1]"));
+        // cost_optimization costs 5: should be locked (missing 3)
+        assert!(frame.contains("[2] Optimización de Costos (Costo: 5 Epifanías) [BLOQUEADO - Faltan 3 Epifanías]"));
+
+        // Now buy muscle_memory
+        assert!(state.buy_permanent_upgrade("muscle_memory"));
+        let frame_after = render_upgrades_frame(&state, &upgrades);
+        assert!(frame_after.contains("[1] Memoria Muscular (Costo: 2 Epifanías) [COMPRADO]"));
     }
 }

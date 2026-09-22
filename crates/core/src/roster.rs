@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn test_default_milestones() {
         let milestones = default_milestones();
-        assert_eq!(milestones.len(), 8);
+        assert_eq!(milestones.len(), 10);
         assert_eq!(milestones[0].level, 25);
         assert_eq!(milestones[0].speed_multiplier, 2.0);
         assert_eq!(milestones[1].level, 50);
@@ -207,13 +207,17 @@ mod tests {
         assert_eq!(milestones[2].speed_multiplier, 8.0);
         assert_eq!(milestones[3].level, 200);
         assert_eq!(milestones[3].speed_multiplier, 16.0);
-        assert_eq!(milestones[4].level, 500);
-        assert_eq!(milestones[4].speed_multiplier, 32.0);
-        assert_eq!(milestones[5].level, 1000);
-        assert_eq!(milestones[5].speed_multiplier, 64.0);
-        assert_eq!(milestones[6].level, 5000);
-        assert_eq!(milestones[6].speed_multiplier, 256.0);
-        assert_eq!(milestones[7].level, 9999);
-        assert_eq!(milestones[7].speed_multiplier, 1000.0);
+        assert_eq!(milestones[4].level, 300);
+        assert_eq!(milestones[4].speed_multiplier, 24.0);
+        assert_eq!(milestones[5].level, 400);
+        assert_eq!(milestones[5].speed_multiplier, 32.0);
+        assert_eq!(milestones[6].level, 500);
+        assert_eq!(milestones[6].speed_multiplier, 64.0);
+        assert_eq!(milestones[7].level, 1000);
+        assert_eq!(milestones[7].speed_multiplier, 128.0);
+        assert_eq!(milestones[8].level, 5000);
+        assert_eq!(milestones[8].speed_multiplier, 256.0);
+        assert_eq!(milestones[9].level, 9999);
+        assert_eq!(milestones[9].speed_multiplier, 1024.0);
     }
 }
