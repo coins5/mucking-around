@@ -15,13 +15,6 @@ use crossterm::{
 const TARGET_FPS: u64 = 60;
 const BAR_WIDTH: usize = 20;
 
-/// Active view screen in the terminal CLI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ViewMode {
-    Main,
-    Upgrades,
-}
-
 /// RAII Guard that manages terminal state and ensures cursor visibility and
 /// terminal modes are safely restored even upon early returns or errors.
 struct TerminalGuard {
@@ -52,7 +45,6 @@ fn main() -> Result<()> {
 
     let mut game = GameState::new();
     let permanent_upgrades = core::default_permanent_upgrades();
-    let mut view_mode = ViewMode::Main;
 
     let frame_duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
     let mut last_tick = Instant::now();
@@ -82,53 +74,51 @@ fn main() -> Result<()> {
                         return Ok(());
                     }
 
-                    // Check for view toggle with 'u' or 'U'
-                    if matches!(key_event.code, KeyCode::Char('u' | 'U')) {
-                        view_mode = match view_mode {
-                            ViewMode::Main => ViewMode::Upgrades,
-                            ViewMode::Upgrades => ViewMode::Main,
-                        };
-                        execute!(stdout(), Clear(ClearType::All))?;
-                        continue;
-                    }
-
-                    // Check for quit or back
-                    let is_exit_key = matches!(key_event.code, KeyCode::Char('q' | 'Q') | KeyCode::Esc);
-                    if is_exit_key {
-                        match view_mode {
-                            ViewMode::Upgrades => {
-                                view_mode = ViewMode::Main;
+                    if game.in_prestige_dialog {
+                        match key_event.code {
+                            KeyCode::Char('s' | 'S') => {
+                                let _ = game.confirm_prestige();
                                 execute!(stdout(), Clear(ClearType::All))?;
-                                continue;
                             }
-                            ViewMode::Main => {
-                                print_exit_summary(&game)?;
-                                return Ok(());
+                            KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                                game.close_prestige_dialog();
+                                execute!(stdout(), Clear(ClearType::All))?;
                             }
+                            _ => {}
                         }
-                    }
-
-                    match view_mode {
-                        ViewMode::Main => {
-                            // Prestige trigger: 'p' or 'P'
-                            if matches!(key_event.code, KeyCode::Char('p' | 'P')) {
-                                let _ = game.trigger_prestige();
+                    } else if game.in_upgrade_menu {
+                        match key_event.code {
+                            KeyCode::Char('u' | 'U') | KeyCode::Esc | KeyCode::Char('q' | 'Q') => {
+                                game.close_upgrade_menu();
+                                execute!(stdout(), Clear(ClearType::All))?;
                             }
-
-                            // Check for upgrading / unlocking activities (1-5)
-                            if let KeyCode::Char(ch @ '1'..='5') = key_event.code {
-                                let index = (ch as usize) - ('1' as usize);
-                                let _ = game.upgrade_activity(index);
-                            }
-                        }
-                        ViewMode::Upgrades => {
-                            // Buy permanent upgrades (1-5)
-                            if let KeyCode::Char(ch @ '1'..='5') = key_event.code {
+                            KeyCode::Char(ch @ '1'..='5') => {
                                 let index = (ch as usize) - ('1' as usize);
                                 if let Some(upgrade) = permanent_upgrades.get(index) {
                                     let _ = game.buy_permanent_upgrade(upgrade.id);
                                 }
                             }
+                            _ => {}
+                        }
+                    } else {
+                        match key_event.code {
+                            KeyCode::Char('p' | 'P') => {
+                                game.open_prestige_dialog();
+                                execute!(stdout(), Clear(ClearType::All))?;
+                            }
+                            KeyCode::Char('u' | 'U') => {
+                                game.open_upgrade_menu();
+                                execute!(stdout(), Clear(ClearType::All))?;
+                            }
+                            KeyCode::Char(ch @ '1'..='5') => {
+                                let index = (ch as usize) - ('1' as usize);
+                                let _ = game.upgrade_activity(index);
+                            }
+                            KeyCode::Char('q' | 'Q') | KeyCode::Esc => {
+                                print_exit_summary(&game)?;
+                                return Ok(());
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -136,9 +126,12 @@ fn main() -> Result<()> {
         }
 
         // Render current frame
-        let frame = match view_mode {
-            ViewMode::Main => ui_text::render_game_frame(&game, BAR_WIDTH, frame_count),
-            ViewMode::Upgrades => ui_text::render_upgrades_frame(&game, &permanent_upgrades),
+        let frame = if game.in_prestige_dialog {
+            ui_text::render_prestige_dialog(&game)
+        } else if game.in_upgrade_menu {
+            ui_text::render_upgrades_frame(&game, &permanent_upgrades)
+        } else {
+            ui_text::render_game_frame(&game, BAR_WIDTH, frame_count)
         };
         frame_count = frame_count.wrapping_add(1);
         execute!(stdout(), cursor::MoveTo(0, 0))?;
@@ -148,9 +141,12 @@ fn main() -> Result<()> {
         }
         execute!(stdout(), terminal::Clear(ClearType::CurrentLine))?;
 
-        let controls = match view_mode {
-            ViewMode::Main => "\r\nControles: [1-5] Mejorar | [P] Crisis Existencial | [U] Mejoras Permanentes | [q / Esc] Salir\r",
-            ViewMode::Upgrades => "\r\nControles: [1-5] Comprar Mejora | [U / Esc] Volver al juego | [q] Volver\r",
+        let controls = if game.in_prestige_dialog {
+            "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r"
+        } else if game.in_upgrade_menu {
+            "\r\nControles: [1-5] Comprar Mejora | [U / Esc / q] Volver al juego\r"
+        } else {
+            "\r\nControles: [1-5] Mejorar | [P] Crisis Existencial | [U] Mejoras Permanentes | [q / Esc] Salir\r"
         };
         println!("{controls}");
         stdout().flush()?;

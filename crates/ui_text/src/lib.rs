@@ -164,9 +164,9 @@ pub fn render_turbo_equalizer(width: usize, frame_seed: u64) -> String {
 
 /// Formats a single activity display line according to its state:
 ///
-/// - If locked (`level == 0`): `[BLOQUEADO] Nombre -> Desbloquear [Tecla]: Cuesta X.XX pts`.
-/// - If active and normal (`level > 0 && !is_turbo()`): Displays milestone progress, sub-block progress bar, percentage, remaining time, reward per cycle, and upgrade cost.
-/// - If active and turbo (`level > 0 && is_turbo()`): Displays milestone progress, oscillating equalizer bar, continuous rate (+XX.XX pts/seg), speed multiplier, and upgrade cost.
+/// - If locked (`level == 0`): Displays shortcut, status, name, unlock cost, and flavor lore.
+/// - If active and normal (`level > 0 && !is_turbo()`): Displays shortcut, name, milestone progress, flavor lore, sub-block progress bar, percentage, remaining time, reward per cycle, and upgrade cost.
+/// - If active and turbo (`level > 0 && is_turbo()`): Displays shortcut, name, milestone progress, flavor lore, oscillating equalizer bar, continuous rate (+XX.XX pts/seg), speed multiplier, and upgrade cost.
 #[must_use]
 pub fn format_activity_line(
     activity: &ActivityState,
@@ -177,11 +177,12 @@ pub fn format_activity_line(
     let key = index + 1;
     if activity.level == 0 {
         let cost = activity.next_cost();
-        let mut line = String::with_capacity(activity.config.name.len() + 80);
+        let mut line = String::with_capacity(activity.config.name.len() + activity.config.lore.len() + 120);
         let _ = write!(
             line,
-            "[BLOQUEADO] {name} -> Desbloquear [{key}]: Cuesta {cost:.2} pts",
+            "[{key}] [BLOQUEADO] {name} -> Desbloquear: Cuesta {cost:.2} pts [Presiona {key}]\n    \"{lore}\"",
             name = activity.config.name,
+            lore = activity.config.lore,
         );
         return line;
     }
@@ -199,11 +200,12 @@ pub fn format_activity_line(
         let pts_per_sec = activity.pts_per_second();
         let speed = activity.speed_multiplier();
 
-        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + 140);
+        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + activity.config.lore.len() + 200);
         let _ = write!(
             line,
-            "{milestone_tag} {name} [{equalizer}] ⚡ TURBO: +{pts_per_sec:.2} pts/seg ({speed:.1}x vel) | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
+            "[{key}] {name} {milestone_tag}\n    \"{lore}\"\n    [{equalizer}] ⚡ TURBO: +{pts_per_sec:.2} pts/seg ({speed:.1}x vel) | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
             name = activity.config.name,
+            lore = activity.config.lore,
         );
         line
     } else {
@@ -212,11 +214,12 @@ pub fn format_activity_line(
         let remaining = activity.remaining_time();
         let reward = activity.current_reward();
 
-        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + 140);
+        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + activity.config.lore.len() + 200);
         let _ = write!(
             line,
-            "{milestone_tag} {name} [{bar}] {percentage}% Faltan {remaining:.2}s | +{reward:.2} pts | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
+            "[{key}] {name} {milestone_tag}\n    \"{lore}\"\n    [{bar}] {percentage}% Faltan {remaining:.2}s | +{reward:.2} pts | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
             name = activity.config.name,
+            lore = activity.config.lore,
         );
         line
     }
@@ -230,7 +233,7 @@ pub fn format_activity_line(
 /// and a bottom section displays Crisis Existencial status and permanent upgrades menu shortcut.
 #[must_use]
 pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -> String {
-    let estimated_line_len = bar_width * 4 + 140;
+    let estimated_line_len = bar_width * 4 + 200;
     let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 256);
 
     let bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
@@ -261,16 +264,48 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
     frame
 }
 
+/// Renders the modal dialog for the Existential Crisis (Prestige confirmation).
+#[must_use]
+pub fn render_prestige_dialog(state: &GameState) -> String {
+    let mut dialog = String::with_capacity(512);
+    let claimable = state.claimable_epiphanies();
+    let bonus_rate = if state.has_permanent_upgrade("zen_enlightenment") {
+        15
+    } else {
+        10
+    };
+    let bonus_pct = claimable * bonus_rate;
+
+    let _ = writeln!(dialog, "==============================================================");
+    let _ = writeln!(dialog, "                 LA CRISIS DE LAS 3:00 AM");
+    let _ = writeln!(dialog, "==============================================================");
+    let _ = writeln!(dialog, " \"Son las 3:00 AM. Te quedas mirando al techo en la oscuridad");
+    let _ = writeln!(dialog, "  mientras la culpa te invade. Te prometes que mañana será");
+    let _ = writeln!(dialog, "  diferente... pero en el fondo sabes que el lunes empiezas.\"");
+    let _ = writeln!(dialog, "--------------------------------------------------------------");
+    let _ = writeln!(
+        dialog,
+        " Reclamarás: +{claimable} Epifanías Zen (+{bonus_pct}% de producción permanente)"
+    );
+    let _ = writeln!(
+        dialog,
+        " ¿Aceptas tu destino y reinicias? [S: Confirmar / N: Cancelar]"
+    );
+    let _ = writeln!(dialog, "==============================================================");
+
+    dialog
+}
+
 /// Renders the permanent upgrades shop frame for Epiphanies.
 ///
 /// Displays current unspent Epiphanies balance, total earned, current production multiplier,
-/// and list of permanent upgrades with their status:
-/// - `[COMPRADO]` if already owned.
+/// and list of permanent upgrades with their status, mechanical effect, and flavor lore:
+/// - `[COMPRADA]` if already owned.
 /// - `[COMPRAR - Presiona {key}]` if purchasable.
 /// - `[BLOQUEADO - Faltan {n} Epifanías]` if insufficient Epiphanies.
 #[must_use]
 pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConfig]) -> String {
-    let mut frame = String::with_capacity(upgrades.len() * 160 + 256);
+    let mut frame = String::with_capacity(upgrades.len() * 256 + 256);
     let bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
 
     let _ = writeln!(frame, "=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ===");
@@ -287,7 +322,7 @@ pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConf
     for (index, upgrade) in upgrades.iter().enumerate() {
         let key = index + 1;
         let status = if state.has_permanent_upgrade(upgrade.id) {
-            "[COMPRADO]".to_string()
+            "[COMPRADA]".to_string()
         } else if state.epiphanies >= upgrade.cost_epiphanies {
             format!("[COMPRAR - Presiona {key}]")
         } else {
@@ -297,11 +332,12 @@ pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConf
 
         let _ = writeln!(
             frame,
-            "[{key}] {name} (Costo: {cost} Epifanías) {status}",
+            "[{key}] {name} - Costo: {cost} Epifanías {status}",
             name = upgrade.name,
             cost = upgrade.cost_epiphanies
         );
-        let _ = writeln!(frame, "    {desc}", desc = upgrade.description);
+        let _ = writeln!(frame, "    Efecto: {desc}", desc = upgrade.description);
+        let _ = writeln!(frame, "    \"{lore}\"", lore = upgrade.lore);
     }
 
     let _ = writeln!(
@@ -466,7 +502,8 @@ mod tests {
     fn test_format_activity_line_unlocked() {
         let state = GameState::new();
         let line = format_activity_line(&state.activities[0], 0, 10, 0);
-        assert!(line.contains("[Lvl. 1 / Hito: 25] Esperar a que cargue la barrita"));
+        assert!(line.contains("[1] Esperar a que cargue la barrita [Lvl. 1 / Hito: 25]"));
+        assert!(line.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
         assert!(line.contains("[          ]"));
         assert!(line.contains("0% Faltan 5.00s"));
         assert!(line.contains("+1.00 pts"));
@@ -477,10 +514,8 @@ mod tests {
     fn test_format_activity_line_locked() {
         let state = GameState::new();
         let line = format_activity_line(&state.activities[1], 1, 10, 0);
-        assert_eq!(
-            line,
-            "[BLOQUEADO] Mirar a la nada fijamente -> Desbloquear [2]: Cuesta 5.00 pts"
-        );
+        assert!(line.contains("[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"));
+        assert!(line.contains("\"Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.\""));
     }
 
     #[test]
@@ -510,8 +545,8 @@ mod tests {
         assert!(state.activities[0].is_turbo());
 
         let line = format_activity_line(&state.activities[0], 0, 12, 42);
-        assert!(line.contains("[Lvl. 1000 / Hito: 5000]"));
-        assert!(line.contains("Esperar a que cargue la barrita"));
+        assert!(line.contains("[1] Esperar a que cargue la barrita [Lvl. 1000 / Hito: 5000]"));
+        assert!(line.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
         assert!(line.contains("⚡ TURBO:"));
         assert!(line.contains("pts/seg"));
         assert!(line.contains("128.0x vel"));
@@ -525,7 +560,8 @@ mod tests {
         assert!(state.activities[0].next_milestone().is_none());
 
         let line = format_activity_line(&state.activities[0], 0, 12, 0);
-        assert!(line.contains("[Lvl. 9999 - MAX]"));
+        assert!(line.contains("[1] Esperar a que cargue la barrita [Lvl. 9999 - MAX]"));
+        assert!(line.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
         assert!(line.contains("⚡ TURBO:"));
         assert!(line.contains("1024.0x vel"));
     }
@@ -537,39 +573,39 @@ mod tests {
         state.activities[0].progress = 2.5;
 
         let frame = render_game_frame(&state, 10, 0);
-        let lines: Vec<&str> = frame.lines().collect();
+        assert!(frame.contains("Puntos: 12.50 | Epifanías Zen: 0 (Bono: +0%)"));
+        assert!(frame.contains("[1] Esperar a que cargue la barrita [Lvl. 1 / Hito: 25]"));
+        assert!(frame.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
+        assert!(frame.contains("[█████     ] 50% Faltan 2.50s | +1.00 pts"));
+        assert!(frame.contains("[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"));
+        assert!(frame.contains("\"Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.\""));
+        assert!(frame.contains("[3] [BLOQUEADO] Hacer scroll infinito sin ver nada -> Desbloquear: Cuesta 25.00 pts [Presiona 3]"));
+        assert!(frame.contains("\"Solo cinco minutitos más... susurró hace cuatro horas y media.\""));
+        assert!(frame.contains("[4] [BLOQUEADO] Abrir la refri vacía por quinta vez -> Desbloquear: Cuesta 100.00 pts [Presiona 4]"));
+        assert!(frame.contains("\"Quizás apareció una pizza por generación espontánea en los últimos 3 minutos.\""));
+        assert!(frame.contains("[5] [BLOQUEADO] Ordenar el escritorio para no trabajar -> Desbloquear: Cuesta 350.00 pts [Presiona 5]"));
+        assert!(frame.contains("\"Increíble cómo organizar cables se vuelve prioridad cuando hay pendientes.\""));
+        assert!(frame.contains("[P] CRISIS EXISTENCIAL -> Reclamar +0 Epifanías (Histórico: 0.00 pts)"));
+        assert!(frame.contains("[U] Menú de Iluminación (Mejoras Permanentes con Epifanías)"));
+    }
 
-        assert_eq!(lines[0], "Puntos: 12.50 | Epifanías Zen: 0 (Bono: +0%)");
-        assert_eq!(lines[1], "------------------------------------------------------------");
-        assert_eq!(
-            lines[2],
-            "[Lvl. 1 / Hito: 25] Esperar a que cargue la barrita [█████     ] 50% Faltan 2.50s | +1.00 pts | Subir a Lvl. 2: Cuesta 1.15 pts [Presiona 1]"
-        );
-        assert_eq!(
-            lines[3],
-            "[BLOQUEADO] Mirar a la nada fijamente -> Desbloquear [2]: Cuesta 5.00 pts"
-        );
-        assert_eq!(
-            lines[4],
-            "[BLOQUEADO] Hacer scroll infinito sin ver nada -> Desbloquear [3]: Cuesta 25.00 pts"
-        );
-        assert_eq!(
-            lines[5],
-            "[BLOQUEADO] Abrir la refri vacía por quinta vez -> Desbloquear [4]: Cuesta 100.00 pts"
-        );
-        assert_eq!(
-            lines[6],
-            "[BLOQUEADO] Ordenar el escritorio para no trabajar -> Desbloquear [5]: Cuesta 350.00 pts"
-        );
-        assert_eq!(lines[7], "------------------------------------------------------------");
-        assert_eq!(
-            lines[8],
-            "[P] CRISIS EXISTENCIAL -> Reclamar +0 Epifanías (Histórico: 0.00 pts)"
-        );
-        assert_eq!(
-            lines[9],
-            "[U] Menú de Iluminación (Mejoras Permanentes con Epifanías)"
-        );
+    #[test]
+    fn test_render_prestige_dialog() {
+        let mut state = GameState::new();
+        state.lifetime_sloth_points = 4000.0;
+        let dialog = render_prestige_dialog(&state);
+
+        assert!(dialog.contains("LA CRISIS DE LAS 3:00 AM"));
+        assert!(dialog.contains("\"Son las 3:00 AM. Te quedas mirando al techo en la oscuridad"));
+        assert!(dialog.contains("mientras la culpa te invade. Te prometes que mañana será"));
+        assert!(dialog.contains("diferente... pero en el fondo sabes que el lunes empiezas.\""));
+        assert!(dialog.contains("Reclamarás: +2 Epifanías Zen (+20% de producción permanente)"));
+        assert!(dialog.contains("¿Aceptas tu destino y reinicias? [S: Confirmar / N: Cancelar]"));
+
+        // With zen_enlightenment upgrade
+        state.purchased_permanent_upgrades.insert("zen_enlightenment".to_string());
+        let dialog_zen = render_prestige_dialog(&state);
+        assert!(dialog_zen.contains("Reclamarás: +2 Epifanías Zen (+30% de producción permanente)"));
     }
 
     #[test]
@@ -583,13 +619,18 @@ mod tests {
         assert!(frame.contains("=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ==="));
         assert!(frame.contains("Epifanías disponibles: 2 | Total ganadas: 2 | Bono Producción: +20%"));
         // muscle_memory costs 2: should be available to buy
-        assert!(frame.contains("[1] Memoria Muscular (Costo: 2 Epifanías) [COMPRAR - Presiona 1]"));
+        assert!(frame.contains("[1] Memoria Muscular - Costo: 2 Epifanías [COMPRAR - Presiona 1]"));
+        assert!(frame.contains("Efecto: La primera actividad inicia en Nivel 10 tras reiniciar."));
+        assert!(frame.contains("\"Tu mano ya abre pestañas de ocio por reflejo involuntario.\""));
+
         // cost_optimization costs 5: should be locked (missing 3)
-        assert!(frame.contains("[2] Optimización de Costos (Costo: 5 Epifanías) [BLOQUEADO - Faltan 3 Epifanías]"));
+        assert!(frame.contains("[2] Optimización del Desgano - Costo: 5 Epifanías [BLOQUEADO - Faltan 3 Epifanías]"));
+        assert!(frame.contains("Efecto: Los niveles de actividades escalan con costo 1.12 en vez de 1.15."));
+        assert!(frame.contains("\"Descubriste métodos para rendir aún menos con menor esfuerzo.\""));
 
         // Now buy muscle_memory
         assert!(state.buy_permanent_upgrade("muscle_memory"));
         let frame_after = render_upgrades_frame(&state, &upgrades);
-        assert!(frame_after.contains("[1] Memoria Muscular (Costo: 2 Epifanías) [COMPRADO]"));
+        assert!(frame_after.contains("[1] Memoria Muscular - Costo: 2 Epifanías [COMPRADA]"));
     }
 }

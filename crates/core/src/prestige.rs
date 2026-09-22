@@ -24,6 +24,7 @@ impl Default for PrestigeConfig {
 }
 
 /// Static configuration for a permanent upgrade purchasable with Epiphanies.
+/// Static configuration for a permanent upgrade purchasable with Epiphanies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PermanentUpgradeConfig {
     /// Unique identifier for the upgrade.
@@ -32,6 +33,8 @@ pub struct PermanentUpgradeConfig {
     pub name: &'static str,
     /// Detailed description of the mechanical benefit.
     pub description: &'static str,
+    /// Flavor text / lore describing this permanent breakthrough.
+    pub lore: &'static str,
     /// Cost in Epiphanies to unlock.
     pub cost_epiphanies: u32,
 }
@@ -46,40 +49,51 @@ impl<'de> Deserialize<'de> for PermanentUpgradeConfig {
             id: String,
             name: String,
             description: String,
+            #[serde(default)]
+            lore: Option<String>,
             cost_epiphanies: u32,
         }
 
         let helper = ConfigHelper::deserialize(deserializer)?;
-        let (id, name, description) = match helper.id.as_str() {
+        let (id, name, description, lore) = match helper.id.as_str() {
             "muscle_memory" => (
                 "muscle_memory",
                 "Memoria Muscular",
-                "La actividad 1 inicia en nivel 10 tras cada Crisis Existencial",
+                "La primera actividad inicia en Nivel 10 tras reiniciar.",
+                "Tu mano ya abre pestañas de ocio por reflejo involuntario.",
             ),
             "cost_optimization" => (
                 "cost_optimization",
-                "Optimización del desgano",
-                "El factor de escalado de costo de actividades se reduce de 1.15 a 1.12",
+                "Optimización del Desgano",
+                "Los niveles de actividades escalan con costo 1.12 en vez de 1.15.",
+                "Descubriste métodos para rendir aún menos con menor esfuerzo.",
             ),
             "zen_enlightenment" => (
                 "zen_enlightenment",
-                "Iluminación De Sillon",
-                "Cada Epifanía no gastada otorga +15% de producción en vez de +10%",
+                "Iluminación de Sillón",
+                "Cada Epifanía libre otorga +15% global en lugar de +10%.",
+                "Aceptas el vacío existencial con una taza de café frío.",
             ),
             "eternal_sloth" => (
                 "eternal_sloth",
-                "Flojera Eterna",
-                "La duración base de todas las actividades se reduce un 20%",
+                "Inercia Pura",
+                "Todas las actividades son permanentemente un 25% más rápidas.",
+                "La física demuestra que el tiempo vuela cuando ignoras tus deberes.",
             ),
             "autopilot" => (
                 "autopilot",
                 "Piloto Automático",
-                "Cada 2.0s compra 1 nivel de la actividad desbloqueada más barata",
+                "Compra 1 nivel de la actividad más barata cada 2 segundos automáticamente.",
+                "La flojera se ejecuta sola. Ya ni para procrastinar te esfuerzas.",
             ),
             _ => (
                 Box::leak(helper.id.into_boxed_str()) as &'static str,
                 Box::leak(helper.name.into_boxed_str()) as &'static str,
                 Box::leak(helper.description.into_boxed_str()) as &'static str,
+                match helper.lore {
+                    Some(s) => Box::leak(s.into_boxed_str()) as &'static str,
+                    None => "",
+                },
             ),
         };
 
@@ -87,6 +101,7 @@ impl<'de> Deserialize<'de> for PermanentUpgradeConfig {
             id,
             name,
             description,
+            lore,
             cost_epiphanies: helper.cost_epiphanies,
         })
     }
@@ -99,31 +114,36 @@ pub fn default_permanent_upgrades() -> Vec<PermanentUpgradeConfig> {
         PermanentUpgradeConfig {
             id: "muscle_memory",
             name: "Memoria Muscular",
-            description: "La actividad 1 inicia en nivel 10 tras cada Crisis Existencial",
+            description: "La primera actividad inicia en Nivel 10 tras reiniciar.",
+            lore: "Tu mano ya abre pestañas de ocio por reflejo involuntario.",
             cost_epiphanies: 2,
         },
         PermanentUpgradeConfig {
             id: "cost_optimization",
-            name: "Optimización de Costos",
-            description: "El factor de escalado de costo de actividades se reduce de 1.15 a 1.12",
+            name: "Optimización del Desgano",
+            description: "Los niveles de actividades escalan con costo 1.12 en vez de 1.15.",
+            lore: "Descubriste métodos para rendir aún menos con menor esfuerzo.",
             cost_epiphanies: 5,
         },
         PermanentUpgradeConfig {
             id: "zen_enlightenment",
-            name: "Iluminación Zen",
-            description: "Cada Epifanía no gastada otorga +15% de producción en vez de +10%",
+            name: "Iluminación de Sillón",
+            description: "Cada Epifanía libre otorga +15% global en lugar de +10%.",
+            lore: "Aceptas el vacío existencial con una taza de café frío.",
             cost_epiphanies: 10,
         },
         PermanentUpgradeConfig {
             id: "eternal_sloth",
-            name: "Flojera Eterna",
-            description: "La duración base de todas las actividades se reduce un 20%",
+            name: "Inercia Pura",
+            description: "Todas las actividades son permanentemente un 25% más rápidas.",
+            lore: "La física demuestra que el tiempo vuela cuando ignoras tus deberes.",
             cost_epiphanies: 20,
         },
         PermanentUpgradeConfig {
             id: "autopilot",
             name: "Piloto Automático",
-            description: "Cada 2.0s compra 1 nivel de la actividad desbloqueada más barata",
+            description: "Compra 1 nivel de la actividad más barata cada 2 segundos automáticamente.",
+            lore: "La flojera se ejecuta sola. Ya ni para procrastinar te esfuerzas.",
             cost_epiphanies: 50,
         },
     ]
@@ -140,18 +160,43 @@ mod tests {
 
         assert_eq!(upgrades[0].id, "muscle_memory");
         assert_eq!(upgrades[0].cost_epiphanies, 2);
+        assert_eq!(upgrades[0].name, "Memoria Muscular");
+        assert_eq!(
+            upgrades[0].lore,
+            "Tu mano ya abre pestañas de ocio por reflejo involuntario."
+        );
 
         assert_eq!(upgrades[1].id, "cost_optimization");
         assert_eq!(upgrades[1].cost_epiphanies, 5);
+        assert_eq!(upgrades[1].name, "Optimización del Desgano");
+        assert_eq!(
+            upgrades[1].lore,
+            "Descubriste métodos para rendir aún menos con menor esfuerzo."
+        );
 
         assert_eq!(upgrades[2].id, "zen_enlightenment");
         assert_eq!(upgrades[2].cost_epiphanies, 10);
+        assert_eq!(upgrades[2].name, "Iluminación de Sillón");
+        assert_eq!(
+            upgrades[2].lore,
+            "Aceptas el vacío existencial con una taza de café frío."
+        );
 
         assert_eq!(upgrades[3].id, "eternal_sloth");
         assert_eq!(upgrades[3].cost_epiphanies, 20);
+        assert_eq!(upgrades[3].name, "Inercia Pura");
+        assert_eq!(
+            upgrades[3].lore,
+            "La física demuestra que el tiempo vuela cuando ignoras tus deberes."
+        );
 
         assert_eq!(upgrades[4].id, "autopilot");
         assert_eq!(upgrades[4].cost_epiphanies, 50);
+        assert_eq!(upgrades[4].name, "Piloto Automático");
+        assert_eq!(
+            upgrades[4].lore,
+            "La flojera se ejecuta sola. Ya ni para procrastinar te esfuerzas."
+        );
     }
 
     #[test]

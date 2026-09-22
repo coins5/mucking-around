@@ -66,6 +66,8 @@ pub struct ActivityConfig {
     pub id: &'static str,
     /// Human-readable display name.
     pub name: &'static str,
+    /// Flavor text / lore describing this procrastination activity.
+    pub lore: &'static str,
     /// Cycle duration in seconds.
     pub duration: f64,
     /// Cost in Sloth Points to unlock (0.0 if initially unlocked).
@@ -85,6 +87,8 @@ impl<'de> Deserialize<'de> for ActivityConfig {
         struct ConfigHelper {
             id: String,
             name: String,
+            #[serde(default)]
+            lore: Option<String>,
             duration: f64,
             cost: f64,
             reward: f64,
@@ -93,26 +97,46 @@ impl<'de> Deserialize<'de> for ActivityConfig {
         }
 
         let helper = ConfigHelper::deserialize(deserializer)?;
-        let id = match helper.id.as_str() {
-            "wait_bar" => "wait_bar",
-            "stare_void" => "stare_void",
-            "doomscroll" => "doomscroll",
-            "check_fridge" => "check_fridge",
-            "clean_desk" => "clean_desk",
-            _ => Box::leak(helper.id.into_boxed_str()),
-        };
-        let name = match helper.name.as_str() {
-            "Esperar a que cargue la barrita" => "Esperar a que cargue la barrita",
-            "Mirar a la nada fijamente" => "Mirar a la nada fijamente",
-            "Hacer scroll infinito sin ver nada" => "Hacer scroll infinito sin ver nada",
-            "Abrir la refri vacía por quinta vez" => "Abrir la refri vacía por quinta vez",
-            "Ordenar el escritorio para no trabajar" => "Ordenar el escritorio para no trabajar",
-            _ => Box::leak(helper.name.into_boxed_str()),
+        let (id, name, lore) = match helper.id.as_str() {
+            "wait_bar" => (
+                "wait_bar",
+                "Esperar a que cargue la barrita",
+                "La vida se mide en barras de carga que sospechosamente se quedan en 99%.",
+            ),
+            "stare_void" => (
+                "stare_void",
+                "Mirar a la nada fijamente",
+                "Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.",
+            ),
+            "doomscroll" => (
+                "doomscroll",
+                "Hacer scroll infinito sin ver nada",
+                "Solo cinco minutitos más... susurró hace cuatro horas y media.",
+            ),
+            "check_fridge" => (
+                "check_fridge",
+                "Abrir la refri vacía por quinta vez",
+                "Quizás apareció una pizza por generación espontánea en los últimos 3 minutos.",
+            ),
+            "clean_desk" => (
+                "clean_desk",
+                "Ordenar el escritorio para no trabajar",
+                "Increíble cómo organizar cables se vuelve prioridad cuando hay pendientes.",
+            ),
+            _ => (
+                Box::leak(helper.id.into_boxed_str()) as &'static str,
+                Box::leak(helper.name.into_boxed_str()) as &'static str,
+                match helper.lore {
+                    Some(s) => Box::leak(s.into_boxed_str()) as &'static str,
+                    None => "",
+                },
+            ),
         };
 
         Ok(ActivityConfig {
             id,
             name,
+            lore,
             duration: helper.duration,
             cost: helper.cost,
             reward: helper.reward,
@@ -128,6 +152,7 @@ pub fn default_roster() -> Vec<ActivityConfig> {
         ActivityConfig {
             id: "wait_bar",
             name: "Esperar a que cargue la barrita",
+            lore: "La vida se mide en barras de carga que sospechosamente se quedan en 99%.",
             duration: 5.0,
             cost: 0.0,
             reward: 1.0,
@@ -136,6 +161,7 @@ pub fn default_roster() -> Vec<ActivityConfig> {
         ActivityConfig {
             id: "stare_void",
             name: "Mirar a la nada fijamente",
+            lore: "Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.",
             duration: 12.5,
             cost: 5.0,
             reward: 3.5,
@@ -144,6 +170,7 @@ pub fn default_roster() -> Vec<ActivityConfig> {
         ActivityConfig {
             id: "doomscroll",
             name: "Hacer scroll infinito sin ver nada",
+            lore: "Solo cinco minutitos más... susurró hace cuatro horas y media.",
             duration: 25.0,
             cost: 25.0,
             reward: 10.0,
@@ -152,6 +179,7 @@ pub fn default_roster() -> Vec<ActivityConfig> {
         ActivityConfig {
             id: "check_fridge",
             name: "Abrir la refri vacía por quinta vez",
+            lore: "Quizás apareció una pizza por generación espontánea en los últimos 3 minutos.",
             duration: 60.0,
             cost: 100.0,
             reward: 36.0,
@@ -160,6 +188,7 @@ pub fn default_roster() -> Vec<ActivityConfig> {
         ActivityConfig {
             id: "clean_desk",
             name: "Ordenar el escritorio para no trabajar",
+            lore: "Increíble cómo organizar cables se vuelve prioridad cuando hay pendientes.",
             duration: 120.0,
             cost: 350.0,
             reward: 120.0,
@@ -181,18 +210,38 @@ mod tests {
         assert_eq!(roster[0].cost, 0.0);
         assert_eq!(roster[0].duration, 5.0);
         assert_eq!(roster[0].reward, 1.0);
+        assert_eq!(
+            roster[0].lore,
+            "La vida se mide en barras de carga que sospechosamente se quedan en 99%."
+        );
 
         assert_eq!(roster[1].id, "stare_void");
         assert_eq!(roster[1].cost, 5.0);
+        assert_eq!(
+            roster[1].lore,
+            "Si miras fijamente a la nada, la nada te exige que te pongas a trabajar."
+        );
 
         assert_eq!(roster[2].id, "doomscroll");
         assert_eq!(roster[2].cost, 25.0);
+        assert_eq!(
+            roster[2].lore,
+            "Solo cinco minutitos más... susurró hace cuatro horas y media."
+        );
 
         assert_eq!(roster[3].id, "check_fridge");
         assert_eq!(roster[3].cost, 100.0);
+        assert_eq!(
+            roster[3].lore,
+            "Quizás apareció una pizza por generación espontánea en los últimos 3 minutos."
+        );
 
         assert_eq!(roster[4].id, "clean_desk");
         assert_eq!(roster[4].cost, 350.0);
+        assert_eq!(
+            roster[4].lore,
+            "Increíble cómo organizar cables se vuelve prioridad cuando hay pendientes."
+        );
     }
 
     #[test]

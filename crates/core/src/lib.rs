@@ -274,6 +274,18 @@ pub enum Action {
     TriggerPrestige,
     /// Buy a permanent upgrade by its unique identifier.
     BuyPermanentUpgrade(String),
+    /// Open the prestige confirmation dialog.
+    OpenPrestigeDialog,
+    /// Close the prestige confirmation dialog.
+    ClosePrestigeDialog,
+    /// Confirm prestige and close the dialog.
+    ConfirmPrestige,
+    /// Open the permanent upgrade menu.
+    OpenUpgradeMenu,
+    /// Close the permanent upgrade menu.
+    CloseUpgradeMenu,
+    /// Toggle the permanent upgrade menu.
+    ToggleUpgradeMenu,
 }
 
 /// The game state managing procrastination activities, Sloth Points, and Epiphanies.
@@ -295,6 +307,12 @@ pub struct GameState {
     pub autopilot_timer: f64,
     /// Dynamic state of all activities in the roster.
     pub activities: Vec<ActivityState>,
+    /// Indicates whether the Existential Crisis (prestige) confirmation dialog is open.
+    #[serde(default)]
+    pub in_prestige_dialog: bool,
+    /// Indicates whether the Zen Enlightenment (permanent upgrades) menu is open.
+    #[serde(default)]
+    pub in_upgrade_menu: bool,
 }
 
 impl Default for GameState {
@@ -318,6 +336,8 @@ impl GameState {
             prestige_config: PrestigeConfig::default(),
             autopilot_timer: 0.0,
             activities,
+            in_prestige_dialog: false,
+            in_upgrade_menu: false,
         }
     }
 
@@ -470,6 +490,47 @@ impl GameState {
         true
     }
 
+    /// Opens the Existential Crisis confirmation dialog.
+    pub fn open_prestige_dialog(&mut self) {
+        self.in_prestige_dialog = true;
+        self.in_upgrade_menu = false;
+    }
+
+    /// Closes the Existential Crisis confirmation dialog.
+    pub fn close_prestige_dialog(&mut self) {
+        self.in_prestige_dialog = false;
+    }
+
+    /// Confirms prestige from the dialog: closes the dialog and triggers prestige.
+    pub fn confirm_prestige(&mut self) -> bool {
+        self.in_prestige_dialog = false;
+        self.trigger_prestige()
+    }
+
+    /// Cancels the prestige dialog without triggering prestige.
+    pub fn cancel_prestige(&mut self) {
+        self.close_prestige_dialog();
+    }
+
+    /// Opens the permanent upgrades shop menu.
+    pub fn open_upgrade_menu(&mut self) {
+        self.in_upgrade_menu = true;
+        self.in_prestige_dialog = false;
+    }
+
+    /// Closes the permanent upgrades shop menu.
+    pub fn close_upgrade_menu(&mut self) {
+        self.in_upgrade_menu = false;
+    }
+
+    /// Toggles the permanent upgrades shop menu open or closed.
+    pub fn toggle_upgrade_menu(&mut self) {
+        self.in_upgrade_menu = !self.in_upgrade_menu;
+        if self.in_upgrade_menu {
+            self.in_prestige_dialog = false;
+        }
+    }
+
     /// Attempts to buy 1 level of the unlocked activity with the lowest upgrade cost.
     pub fn buy_cheapest_unlocked_activity(&mut self) -> bool {
         let cheapest_index = self
@@ -495,6 +556,27 @@ impl GameState {
             }
             Action::TriggerPrestige => self.trigger_prestige(),
             Action::BuyPermanentUpgrade(id) => self.buy_permanent_upgrade(&id),
+            Action::OpenPrestigeDialog => {
+                self.open_prestige_dialog();
+                true
+            }
+            Action::ClosePrestigeDialog => {
+                self.close_prestige_dialog();
+                true
+            }
+            Action::ConfirmPrestige => self.confirm_prestige(),
+            Action::OpenUpgradeMenu => {
+                self.open_upgrade_menu();
+                true
+            }
+            Action::CloseUpgradeMenu => {
+                self.close_upgrade_menu();
+                true
+            }
+            Action::ToggleUpgradeMenu => {
+                self.toggle_upgrade_menu();
+                true
+            }
         }
     }
 
@@ -654,6 +736,7 @@ mod tests {
         let mut activity = ActivityState::new(ActivityConfig {
             id: "test",
             name: "Test",
+            lore: "Test lore",
             duration: 10.0,
             cost: 5.0,
             reward: 2.5,
@@ -768,6 +851,7 @@ mod tests {
         let mut activity = ActivityState::new(ActivityConfig {
             id: "test",
             name: "Test",
+            lore: "Test lore",
             duration: 1.0,
             cost: 0.0,
             reward: 5.0,
@@ -875,6 +959,59 @@ mod tests {
         state.epiphanies = 2;
         assert!(state.handle_action(Action::BuyPermanentUpgrade("muscle_memory".to_string())));
         assert!(state.has_permanent_upgrade("muscle_memory"));
+
+        // Test dialog and menu actions
+        assert!(!state.in_prestige_dialog);
+        assert!(state.handle_action(Action::OpenPrestigeDialog));
+        assert!(state.in_prestige_dialog);
+        assert!(state.handle_action(Action::ClosePrestigeDialog));
+        assert!(!state.in_prestige_dialog);
+
+        assert!(!state.in_upgrade_menu);
+        assert!(state.handle_action(Action::OpenUpgradeMenu));
+        assert!(state.in_upgrade_menu);
+        assert!(state.handle_action(Action::CloseUpgradeMenu));
+        assert!(!state.in_upgrade_menu);
+
+        assert!(state.handle_action(Action::ToggleUpgradeMenu));
+        assert!(state.in_upgrade_menu);
+        assert!(state.handle_action(Action::ToggleUpgradeMenu));
+        assert!(!state.in_upgrade_menu);
+
+        state.lifetime_sloth_points = 9000.0;
+        state.open_prestige_dialog();
+        assert!(state.in_prestige_dialog);
+        assert!(state.handle_action(Action::ConfirmPrestige));
+        assert!(!state.in_prestige_dialog);
+        assert_eq!(state.epiphanies, 2);
+    }
+
+    #[test]
+    fn test_prestige_dialog_and_menu_navigation() {
+        let mut state = GameState::new();
+        assert!(!state.in_prestige_dialog);
+        assert!(!state.in_upgrade_menu);
+
+        state.open_prestige_dialog();
+        assert!(state.in_prestige_dialog);
+        assert!(!state.in_upgrade_menu);
+
+        state.open_upgrade_menu();
+        assert!(!state.in_prestige_dialog);
+        assert!(state.in_upgrade_menu);
+
+        state.close_upgrade_menu();
+        assert!(!state.in_upgrade_menu);
+
+        state.open_prestige_dialog();
+        state.cancel_prestige();
+        assert!(!state.in_prestige_dialog);
+
+        state.lifetime_sloth_points = 1000.0;
+        state.open_prestige_dialog();
+        assert!(state.confirm_prestige());
+        assert!(!state.in_prestige_dialog);
+        assert_eq!(state.epiphanies, 1);
     }
 
     #[test]
