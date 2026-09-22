@@ -1,0 +1,385 @@
+:root {
+  --bg-color: #080c10;
+  --bezel-color: #121820;
+  --bezel-border: #21262d;
+  --screen-bg: #05080c;
+  --screen-text: #58a6ff;
+  --accent-color: #3fb950;
+  --warning-color: #d29922;
+  --danger-color: #f85149;
+  --font-mono: "Fira Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, Monaco, "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: #c9d1d9;
+  font-family: var(--font-mono);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px;
+  overflow-x: hidden;
+}
+
+.app-container {
+  width: 100%;
+  max-width: 960px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Header & Barra Superior */
+.top-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--bezel-color);
+  border: 1px solid var(--bezel-border);
+  border-radius: 8px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo-icon {
+  font-size: 1.4rem;
+}
+
+.logo-title {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #f0f6fc;
+  letter-spacing: -0.5px;
+}
+
+.badge {
+  font-size: 0.7rem;
+  background: #1f6feb33;
+  color: #58a6ff;
+  border: 1px solid #1f6feb66;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: bold;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.save-status {
+  font-size: 0.8rem;
+  color: #8b949e;
+  transition: color 0.3s ease;
+  margin-right: 4px;
+}
+
+.save-status.saved {
+  color: var(--accent-color);
+}
+
+.tool-btn {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tool-btn:hover {
+  background: #30363d;
+  color: #f0f6fc;
+}
+
+.tool-btn:active {
+  transform: translateY(1px);
+}
+
+.tool-btn.danger {
+  color: #ff7b72;
+}
+
+.tool-btn.danger:hover {
+  background: #da363322;
+  border-color: #f85149;
+}
+
+/* Marco de Terminal */
+.terminal-outer {
+  width: 100%;
+}
+
+.terminal-bezel {
+  background: var(--bezel-color);
+  border: 1px solid var(--bezel-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: #161b22;
+  border-bottom: 1px solid var(--bezel-border);
+}
+
+.terminal-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot.red { background: #ff5f56; }
+.dot.yellow { background: #ffbd2e; }
+.dot.green { background: #27c93f; }
+
+.terminal-title {
+  font-size: 0.78rem;
+  color: #8b949e;
+  letter-spacing: 0.5px;
+}
+
+.fps-counter {
+  font-size: 0.75rem;
+  color: #8b949e;
+}
+
+/* Pantalla del Terminal */
+.terminal-screen {
+  background: var(--screen-bg);
+  padding: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  position: relative;
+  min-height: 480px;
+}
+
+/* Efecto sutil de scanline CRT */
+.terminal-screen::after {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+  background-size: 100% 4px;
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+#screen {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.25;
+  color: #e6edf3;
+  white-space: pre;
+  tab-size: 4;
+  outline: none;
+  user-select: text;
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.controls-hint {
+  padding: 8px 16px;
+  background: #0d1117;
+  border-top: 1px solid var(--bezel-border);
+  font-size: 0.8rem;
+  color: #8b949e;
+  text-align: center;
+}
+
+/* Controles Táctiles y Accesibles */
+.mobile-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.controls-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.touch-btn {
+  background: #161b22;
+  color: #f0f6fc;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.touch-btn:hover {
+  background: #21262d;
+  border-color: #58a6ff;
+}
+
+.touch-btn:active {
+  transform: scale(0.96);
+  background: #30363d;
+}
+
+.touch-btn.primary {
+  width: 100%;
+  padding: 14px;
+  font-size: 1.05rem;
+  background: #238636;
+  border-color: #2ea043;
+  color: #ffffff;
+  box-shadow: 0 2px 10px rgba(46, 160, 67, 0.25);
+}
+
+.touch-btn.primary:hover {
+  background: #2ea043;
+}
+
+.touch-btn.primary:active {
+  background: #238636;
+  transform: scale(0.98);
+}
+
+.btn-shortcut {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.activities-row {
+  display: flex;
+  justify-content: center;
+}
+
+.row-label {
+  font-size: 0.85rem;
+  color: #8b949e;
+  margin-right: 4px;
+}
+
+.key-btn {
+  flex: 1;
+  max-width: 80px;
+  padding: 10px;
+  font-size: 1rem;
+}
+
+.nav-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.nav-btn {
+  flex: 1;
+  font-size: 0.82rem;
+  padding: 8px 10px;
+}
+
+.back-btn {
+  background: #21262d;
+}
+
+.back-btn:hover {
+  background: #30363d;
+}
+
+.danger-btn {
+  background: #b62324;
+  border-color: #d73a49;
+  box-shadow: 0 2px 10px rgba(218, 54, 51, 0.35);
+}
+
+.danger-btn:hover {
+  background: #da3633;
+}
+
+.context-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: fadeIn 0.15s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsividad para móviles */
+@media (max-width: 768px) {
+  body {
+    padding: 6px;
+  }
+
+  .top-nav {
+    padding: 6px 10px;
+  }
+
+  .logo-title {
+    font-size: 0.95rem;
+  }
+
+  #screen {
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .terminal-screen {
+    padding: 10px 8px;
+    min-height: 400px;
+  }
+
+  .touch-btn {
+    padding: 8px 10px;
+    font-size: 0.82rem;
+  }
+
+  .touch-btn.primary {
+    padding: 12px;
+    font-size: 0.95rem;
+  }
+
+  .nav-btn {
+    font-size: 0.75rem;
+    padding: 6px 8px;
+  }
+}

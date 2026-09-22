@@ -18,7 +18,7 @@ The repository is organized as a Cargo Workspace to enforce strict decoupling:
 │   ├── core/                  # Pure game logic (state, tick, resources, saves)
 │   ├── ui_text/               # Agnostic text renderers, bar math & ASCII buffers
 │   ├── cli/                   # Native terminal binary (Crossterm / Ratatui)
-│   └── web/                   # (Future) WASM target bindings
+│   └── web/                   # WASM target bindings (wasm-bindgen, localStorage, web bridge)
 ```
 
 ### Critical Architecture Rules
@@ -32,6 +32,12 @@ The repository is organized as a Cargo Workspace to enforce strict decoupling:
 2. **Decoupled Visuals in `ui_text`:**
    - Visual helpers, string formatters, and sub-block text generation live here.
    - Outputs plain `String` buffers or structured text frames, agnostic of whether they are drawn to stdout, an ANSI buffer, or a Web canvas.
+
+3. **Mechanics & Fog of War Parity (Terminal ↔ Web):**
+   - All presentation layers (Terminal CLI, Web, future Desktop) must maintain 100% mechanical and visual parity with `core`.
+   - **Progressive Discovery (Niebla de Guerra):** Controls, touch buttons, and shortcuts must NEVER reveal or enable interactions for unrevealed activities, locked upgrades, or hidden prestige mechanics until unlocked in `GameState`.
+   - Dynamic controls and on-screen buttons must adapt strictly to the `ActiveView` state (e.g., hiding activity controls when in dialogs or menus, showing only valid contextual actions).
+   - Any new mechanic, formula, or shortcut introduced to `core` or `cli` must be synchronized simultaneously to `web`.
 
 ---
 
@@ -96,4 +102,24 @@ cargo test --workspace
 
 ```bash
 cargo clippy --workspace -- -D warnings
+```
+
+- **Build WASM Web package:**
+
+```bash
+wasm-pack build crates/web --target web --out-dir ../../www/pkg
+```
+
+- **Useful Makefile Shortcuts:**
+
+```bash
+make help          # Show all available commands
+make run           # Run native CLI binary
+make test          # Run all workspace unit tests
+make check         # Check entire workspace
+make clippy        # Lint entire workspace
+make web-build     # Build WASM package
+make web-serve     # Serve web version at http://localhost:8080
+make web           # Build and serve web version
+make clean         # Clean build artifacts
 ```
