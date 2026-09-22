@@ -29,7 +29,6 @@ pub fn default_milestones() -> Vec<Milestone> {
             level: 200,
             speed_multiplier: 16.0,
         },
-
         Milestone {
             level: 300,
             speed_multiplier: 24.0,
@@ -38,12 +37,10 @@ pub fn default_milestones() -> Vec<Milestone> {
             level: 400,
             speed_multiplier: 32.0,
         },
-
         Milestone {
             level: 500,
             speed_multiplier: 64.0,
         },
-
         Milestone {
             level: 1000,
             speed_multiplier: 128.0,

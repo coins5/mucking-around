@@ -1,7 +1,16 @@
 [package]
 name = "cli"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "mucking-around"
+
+[[bin]]
+name = "mucking-around"
+path = "src/main.rs"
 
 [dependencies]
 core = { path = "../core" }

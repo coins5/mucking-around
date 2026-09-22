@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
-use std::fmt::Write;
 use game_core::{
     AchievementConfig, ActivityState, DistractionRewardType, ExistentialStats, GameState,
     Generator, OfflineProgressReport, PermanentUpgradeConfig, ProductiveComparison, ResourceId,
 };
+use std::collections::HashMap;
+use std::fmt::Write;
 use thiserror::Error;
 
 /// Domain errors for text rendering operations.
@@ -156,7 +156,9 @@ pub fn render_turbo_equalizer(width: usize, frame_seed: u64) -> String {
 
     for col in 0..width {
         let x = (col as f64) * 0.6;
-        let wave = (x + t).sin() * 0.5 + (x * 1.7 - t * 1.2).sin() * 0.35 + (x * 0.5 + t * 0.8).cos() * 0.15;
+        let wave = (x + t).sin() * 0.5
+            + (x * 1.7 - t * 1.2).sin() * 0.35
+            + (x * 0.5 + t * 0.8).cos() * 0.15;
         let normalized = ((wave + 1.0) * 0.5).clamp(0.0, 0.9999);
         let block_index = ((normalized * 8.0).floor() as usize).min(7);
         output.push(VERTICAL_BLOCKS[block_index]);
@@ -180,7 +182,8 @@ pub fn format_activity_line(
     let key = index + 1;
     if activity.level == 0 {
         let cost = activity.next_cost();
-        let mut line = String::with_capacity(activity.config.name.len() + activity.config.lore.len() + 120);
+        let mut line =
+            String::with_capacity(activity.config.name.len() + activity.config.lore.len() + 120);
         let _ = write!(
             line,
             "[{key}] [BLOQUEADO] {name} -> Desbloquear: Cuesta {cost:.2} pts [Presiona {key}]\n    \"{lore}\"",
@@ -203,7 +206,9 @@ pub fn format_activity_line(
         let pts_per_sec = activity.pts_per_second();
         let speed = activity.speed_multiplier();
 
-        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + activity.config.lore.len() + 200);
+        let mut line = String::with_capacity(
+            bar_width * 4 + activity.config.name.len() + activity.config.lore.len() + 200,
+        );
         let _ = write!(
             line,
             "[{key}] {name} {milestone_tag}\n    \"{lore}\"\n    [{equalizer}] ⚡ TURBO: +{pts_per_sec:.2} pts/seg ({speed:.1}x vel) | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
@@ -217,7 +222,9 @@ pub fn format_activity_line(
         let remaining = activity.remaining_time();
         let reward = activity.current_reward();
 
-        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + activity.config.lore.len() + 200);
+        let mut line = String::with_capacity(
+            bar_width * 4 + activity.config.name.len() + activity.config.lore.len() + 200,
+        );
         let _ = write!(
             line,
             "[{key}] {name} {milestone_tag}\n    \"{lore}\"\n    [{bar}] {percentage}% Faltan {remaining:.2}s | +{reward:.2} pts | Subir a Lvl. {next_level}: Cuesta {next_cost:.2} pts [Presiona {key}]",
@@ -280,10 +287,16 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
         );
     }
 
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
 
     if let Some(ref distraction) = state.active_distraction {
-        let _ = writeln!(frame, "************************************************************");
+        let _ = writeln!(
+            frame,
+            "************************************************************"
+        );
         let _ = writeln!(
             frame,
             "📱 ¡DISTRACCIÓN INESPERADA!: {}\n    \"{}\"",
@@ -321,7 +334,10 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
             "    [{dist_bar}] {time:.1}s restantes | Recompensa: {effect_str}\n    >>> [ESPACIO / D] ¡Reclamar Distracción! <<<",
             time = distraction.time_remaining
         );
-        let _ = writeln!(frame, "************************************************************");
+        let _ = writeln!(
+            frame,
+            "************************************************************"
+        );
     }
 
     for (index, activity) in state.activities.iter().enumerate() {
@@ -331,7 +347,10 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
         }
     }
 
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
     if state.prestige_revealed {
         let _ = writeln!(
             frame,
@@ -341,7 +360,12 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
         );
     }
 
-    let num_revealed = state.activities.iter().filter(|a| a.is_revealed).count().max(1);
+    let num_revealed = state
+        .activities
+        .iter()
+        .filter(|a| a.is_revealed)
+        .count()
+        .max(1);
     let act_shortcut = if num_revealed == 1 {
         "[1] Subir Nivel".to_string()
     } else {
@@ -370,9 +394,15 @@ pub fn render_offline_modal(report: &OfflineProgressReport) -> String {
     let seconds = total_secs % 60;
     let efficiency_pct = report.offline_efficiency * 100.0;
 
-    let _ = writeln!(modal, "==============================================================");
+    let _ = writeln!(
+        modal,
+        "=============================================================="
+    );
     let _ = writeln!(modal, "                 ¡PROGRESO MIENTRAS DORMÍAS!");
-    let _ = writeln!(modal, "==============================================================");
+    let _ = writeln!(
+        modal,
+        "=============================================================="
+    );
     let _ = writeln!(
         modal,
         " Estuviste ausente durante: {} horas, {} minutos y {} segundos.",
@@ -380,40 +410,81 @@ pub fn render_offline_modal(report: &OfflineProgressReport) -> String {
     );
     let _ = writeln!(modal, " Eficiencia del descanso: {efficiency_pct:.1}%");
     let _ = writeln!(modal);
-    let _ = writeln!(modal, " Tu nivel de desidia es tan alto que incluso desconectado");
+    let _ = writeln!(
+        modal,
+        " Tu nivel de desidia es tan alto que incluso desconectado"
+    );
     let _ = writeln!(modal, " lograste acumular:");
     let _ = writeln!(modal);
-    let _ = writeln!(modal, "                  +{:.2} Puntos de Flojera", report.points_earned);
-    let _ = writeln!(modal, "--------------------------------------------------------------");
+    let _ = writeln!(
+        modal,
+        "                  +{:.2} Puntos de Flojera",
+        report.points_earned
+    );
+    let _ = writeln!(
+        modal,
+        "--------------------------------------------------------------"
+    );
     let _ = writeln!(modal, "                   [Presiona cualquier tecla]");
-    let _ = writeln!(modal, "==============================================================");
+    let _ = writeln!(
+        modal,
+        "=============================================================="
+    );
 
     modal
 }
 
 /// Renders the existential statistics screen and real-world productive comparisons.
 #[must_use]
-pub fn render_stats_frame(stats: &ExistentialStats, comparisons: &[ProductiveComparison]) -> String {
+pub fn render_stats_frame(
+    stats: &ExistentialStats,
+    comparisons: &[ProductiveComparison],
+) -> String {
     let mut frame = String::with_capacity(1024);
     let total_secs = stats.total_seconds_played.max(0.0) as u64;
     let hours = total_secs / 3600;
     let minutes = (total_secs % 3600) / 60;
     let seconds = total_secs % 60;
 
-    let _ = writeln!(frame, "================ ESTADÍSTICAS EXISTENCIALES ================");
+    let _ = writeln!(
+        frame,
+        "================ ESTADÍSTICAS EXISTENCIALES ================"
+    );
     let _ = writeln!(
         frame,
         "Tiempo total procrastinado: {}h {}m {}s",
         hours, minutes, seconds
     );
     let _ = writeln!(frame, "Clics con el lapicero: {}", stats.total_pen_clicks);
-    let _ = writeln!(frame, "Barras de ocio completadas: {}", stats.total_bars_completed);
-    let _ = writeln!(frame, "Distracciones aprovechadas: {}", stats.total_distractions_claimed);
-    let _ = writeln!(frame, "Crisis existenciales (Prestigios): {}", stats.total_prestiges);
-    let _ = writeln!(frame, "Puntos de Flojera históricos acumulados: {:.2}", stats.total_sloth_points_earned);
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "Barras de ocio completadas: {}",
+        stats.total_bars_completed
+    );
+    let _ = writeln!(
+        frame,
+        "Distracciones aprovechadas: {}",
+        stats.total_distractions_claimed
+    );
+    let _ = writeln!(
+        frame,
+        "Crisis existenciales (Prestigios): {}",
+        stats.total_prestiges
+    );
+    let _ = writeln!(
+        frame,
+        "Puntos de Flojera históricos acumulados: {:.2}",
+        stats.total_sloth_points_earned
+    );
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
     let _ = writeln!(frame, "¿QUÉ COSAS REALES PODRÍAS HABER HECHO EN SU LUGAR?");
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
 
     for comp in comparisons {
         let times = if comp.required_seconds > 0.0 {
@@ -421,15 +492,14 @@ pub fn render_stats_frame(stats: &ExistentialStats, comparisons: &[ProductiveCom
         } else {
             0
         };
-        let _ = writeln!(
-            frame,
-            "• [{} veces] {}",
-            times, comp.activity_name
-        );
+        let _ = writeln!(frame, "• [{} veces] {}", times, comp.activity_name);
         let _ = writeln!(frame, "    \"{}\"", comp.humor_lore);
     }
 
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
     let _ = writeln!(frame, "[S / Esc] Volver al tablero principal");
 
     frame
@@ -445,7 +515,10 @@ pub fn render_achievements_frame(state: &GameState, achievements: &[AchievementC
         .count();
     let total_bonus_pct = ((state.achievements_multiplier() - 1.0) * 100.0 * 10.0).round() / 10.0;
 
-    let _ = writeln!(frame, "=================== GALERÍA DE LOGROS ===================");
+    let _ = writeln!(
+        frame,
+        "=================== GALERÍA DE LOGROS ==================="
+    );
     let _ = writeln!(
         frame,
         "Logros desbloqueados: {} / {} | Bono pasivo total: +{:.1}%",
@@ -453,7 +526,10 @@ pub fn render_achievements_frame(state: &GameState, achievements: &[AchievementC
         achievements.len(),
         total_bonus_pct
     );
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
 
     for ach in achievements {
         let is_unlocked = state.unlocked_achievements.contains(ach.id);
@@ -471,7 +547,10 @@ pub fn render_achievements_frame(state: &GameState, achievements: &[AchievementC
         }
     }
 
-    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(
+        frame,
+        "------------------------------------------------------------"
+    );
     let _ = writeln!(frame, "[A / Esc] Volver al tablero principal");
 
     frame
@@ -489,13 +568,31 @@ pub fn render_prestige_dialog(state: &GameState) -> String {
     };
     let bonus_pct = claimable * bonus_rate;
 
-    let _ = writeln!(dialog, "==============================================================");
+    let _ = writeln!(
+        dialog,
+        "=============================================================="
+    );
     let _ = writeln!(dialog, "                 LA CRISIS DE LAS 3:00 AM");
-    let _ = writeln!(dialog, "==============================================================");
-    let _ = writeln!(dialog, " \"Son las 3:00 AM. Te quedas mirando al techo en la oscuridad");
-    let _ = writeln!(dialog, "  mientras la culpa te invade. Te prometes que mañana será");
-    let _ = writeln!(dialog, "  diferente... pero en el fondo sabes que el lunes empiezas.\"");
-    let _ = writeln!(dialog, "--------------------------------------------------------------");
+    let _ = writeln!(
+        dialog,
+        "=============================================================="
+    );
+    let _ = writeln!(
+        dialog,
+        " \"Son las 3:00 AM. Te quedas mirando al techo en la oscuridad"
+    );
+    let _ = writeln!(
+        dialog,
+        "  mientras la culpa te invade. Te prometes que mañana será"
+    );
+    let _ = writeln!(
+        dialog,
+        "  diferente... pero en el fondo sabes que el lunes empiezas.\""
+    );
+    let _ = writeln!(
+        dialog,
+        "--------------------------------------------------------------"
+    );
     let _ = writeln!(
         dialog,
         " Reclamarás: +{claimable} Epifanías Zen (+{bonus_pct}% de producción permanente)"
@@ -504,7 +601,10 @@ pub fn render_prestige_dialog(state: &GameState) -> String {
         dialog,
         " ¿Aceptas tu destino y reinicias? [S: Confirmar / N: Cancelar]"
     );
-    let _ = writeln!(dialog, "==============================================================");
+    let _ = writeln!(
+        dialog,
+        "=============================================================="
+    );
 
     dialog
 }
@@ -521,7 +621,10 @@ pub fn render_upgrades_frame(state: &GameState, upgrades: &[PermanentUpgradeConf
     let mut frame = String::with_capacity(upgrades.len() * 256 + 256);
     let bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
 
-    let _ = writeln!(frame, "=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ===");
+    let _ = writeln!(
+        frame,
+        "=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ==="
+    );
     let _ = writeln!(
         frame,
         "Epifanías disponibles: {} | Total ganadas: {} | Bono Producción: +{}%",
@@ -590,7 +693,11 @@ pub fn format_status_line(
     bar_width: usize,
 ) -> String {
     let bar = render_sub_block_bar(progress, target_duration, bar_width);
-    let ratio = if !target_duration.is_finite() || target_duration <= 0.0 || !progress.is_finite() || progress <= 0.0 {
+    let ratio = if !target_duration.is_finite()
+        || target_duration <= 0.0
+        || !progress.is_finite()
+        || progress <= 0.0
+    {
         0.0
     } else {
         (progress / target_duration).clamp(0.0, 1.0)
@@ -671,7 +778,11 @@ mod tests {
         for (i, &exp_char) in expected.iter().enumerate() {
             let bar = render_sub_block_bar(i as f64, max, 1);
             assert_eq!(bar.chars().count(), 1);
-            assert_eq!(bar.chars().next().unwrap(), exp_char, "Failed at eighth {i}");
+            assert_eq!(
+                bar.chars().next().unwrap(),
+                exp_char,
+                "Failed at eighth {i}"
+            );
         }
     }
 
@@ -728,7 +839,9 @@ mod tests {
         let state = GameState::new();
         let line = format_activity_line(&state.activities[0], 0, 10, 0);
         assert!(line.contains("[1] Esperar a que cargue la barrita [Lvl. 1 / Hito: 25]"));
-        assert!(line.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
+        assert!(line.contains(
+            "\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""
+        ));
         assert!(line.contains("[          ]"));
         assert!(line.contains("0% Faltan 5.00s"));
         assert!(line.contains("+1.00 pts"));
@@ -739,8 +852,12 @@ mod tests {
     fn test_format_activity_line_locked() {
         let state = GameState::new();
         let line = format_activity_line(&state.activities[1], 1, 10, 0);
-        assert!(line.contains("[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"));
-        assert!(line.contains("\"Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.\""));
+        assert!(line.contains(
+            "[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"
+        ));
+        assert!(line.contains(
+            "\"Si miras fijamente a la nada, la nada te exige que te pongas a trabajar.\""
+        ));
     }
 
     #[test]
@@ -771,7 +888,9 @@ mod tests {
 
         let line = format_activity_line(&state.activities[0], 0, 12, 42);
         assert!(line.contains("[1] Esperar a que cargue la barrita [Lvl. 1000 / Hito: 5000]"));
-        assert!(line.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
+        assert!(line.contains(
+            "\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""
+        ));
         assert!(line.contains("⚡ TURBO:"));
         assert!(line.contains("pts/seg"));
         assert!(line.contains("128.0x vel"));
@@ -786,7 +905,9 @@ mod tests {
 
         let line = format_activity_line(&state.activities[0], 0, 12, 0);
         assert!(line.contains("[1] Esperar a que cargue la barrita [Lvl. 9999 - MAX]"));
-        assert!(line.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
+        assert!(line.contains(
+            "\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""
+        ));
         assert!(line.contains("⚡ TURBO:"));
         assert!(line.contains("1024.0x vel"));
     }
@@ -806,7 +927,9 @@ mod tests {
         // Activity 0 and 1 are revealed, activities 2-4 are hidden
         assert!(frame.contains("[1] Esperar a que cargue la barrita [Lvl. 1 / Hito: 25]"));
         assert!(frame.contains("[█████     ] 50% Faltan 2.50s | +1.00 pts"));
-        assert!(frame.contains("[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"));
+        assert!(frame.contains(
+            "[2] [BLOQUEADO] Mirar a la nada fijamente -> Desbloquear: Cuesta 5.00 pts [Presiona 2]"
+        ));
         assert!(!frame.contains("[3] [BLOQUEADO]"));
         assert!(!frame.contains("[4] [BLOQUEADO]"));
         assert!(!frame.contains("[5] [BLOQUEADO]"));
@@ -844,7 +967,9 @@ mod tests {
         assert!(frame.contains("⚡ ¡FRENESÍ DE FLOJERA ACTIVO! ["));
         assert!(frame.contains("x7.0 (18.5s restantes)"));
         assert!(frame.contains("🖊️ Lapicero: *¡Crack!*"));
-        assert!(frame.contains("🎁 Última distracción: Meme del Grupo -> +200.00 Puntos de Flojera al instante"));
+        assert!(frame.contains(
+            "🎁 Última distracción: Meme del Grupo -> +200.00 Puntos de Flojera al instante"
+        ));
         assert!(frame.contains("📱 ¡DISTRACCIÓN INESPERADA!: Video de Restauración"));
         assert!(frame.contains("Frenesí x7.0 por 25s"));
         assert!(frame.contains(">>> [ESPACIO / D] ¡Reclamar Distracción! <<<"));
@@ -901,7 +1026,9 @@ mod tests {
         assert!(frame.contains("=================== GALERÍA DE LOGROS ==================="));
         assert!(frame.contains("Logros desbloqueados: 1 / 6"));
         assert!(frame.contains("[DESBLOQUEADO (+1.5%)] El Comienzo del Fin"));
-        assert!(frame.contains("\"Cualquier viaje de mil millas empieza sin levantarse del sillón.\""));
+        assert!(
+            frame.contains("\"Cualquier viaje de mil millas empieza sin levantarse del sillón.\"")
+        );
         assert!(frame.contains("[BLOQUEADO] Síndrome del Resorte"));
         assert!(frame.contains("\x1b[90m[BLOQUEADO] Síndrome del Resorte\x1b[0m"));
         assert!(frame.contains("[A / Esc] Volver al tablero principal"));
@@ -921,9 +1048,13 @@ mod tests {
         assert!(dialog.contains("¿Aceptas tu destino y reinicias? [S: Confirmar / N: Cancelar]"));
 
         // With zen_enlightenment upgrade
-        state.purchased_permanent_upgrades.insert("zen_enlightenment".to_string());
+        state
+            .purchased_permanent_upgrades
+            .insert("zen_enlightenment".to_string());
         let dialog_zen = render_prestige_dialog(&state);
-        assert!(dialog_zen.contains("Reclamarás: +2 Epifanías Zen (+30% de producción permanente)"));
+        assert!(
+            dialog_zen.contains("Reclamarás: +2 Epifanías Zen (+30% de producción permanente)")
+        );
     }
 
     #[test]
@@ -936,7 +1067,9 @@ mod tests {
 
         let frame = render_upgrades_frame(&state, &upgrades);
         assert!(frame.contains("=== MENÚ DE ILUMINACIÓN ZEN (MEJORAS PERMANENTES) ==="));
-        assert!(frame.contains("Epifanías disponibles: 2 | Total ganadas: 2 | Bono Producción: +20%"));
+        assert!(
+            frame.contains("Epifanías disponibles: 2 | Total ganadas: 2 | Bono Producción: +20%")
+        );
         // muscle_memory costs 2: should be revealed and available to buy
         assert!(frame.contains("[1] Memoria Muscular - Costo: 2 Epifanías [COMPRAR - Presiona 1]"));
         assert!(frame.contains("Efecto: La primera actividad inicia en Nivel 10 tras reiniciar."));
@@ -957,6 +1090,8 @@ mod tests {
         let frame_after = render_upgrades_frame(&state, &upgrades);
         assert!(frame_after.contains("[1] Memoria Muscular - Costo: 2 Epifanías [COMPRADA]"));
         // cost_optimization was previously revealed, so it STAYS revealed as blocked
-        assert!(frame_after.contains("[2] Optimización del Desgano - Costo: 5 Epifanías [BLOQUEADO - Faltan 2 Epifanías]"));
+        assert!(frame_after.contains(
+            "[2] Optimización del Desgano - Costo: 5 Epifanías [BLOQUEADO - Faltan 2 Epifanías]"
+        ));
     }
 }

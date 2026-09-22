@@ -9,21 +9,19 @@ pub mod roster;
 pub mod stats;
 pub mod view;
 
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
-pub use achievements::{default_achievements, AchievementCondition, AchievementConfig};
+pub use achievements::{AchievementCondition, AchievementConfig, default_achievements};
 pub use distraction::{
-    default_distractions, ActiveDistractionState, ClaimedDistractionFeedback, DistractionConfig,
-    DistractionRewardType, DistractionSystemConfig,
+    ActiveDistractionState, ClaimedDistractionFeedback, DistractionConfig, DistractionRewardType,
+    DistractionSystemConfig, default_distractions,
 };
 pub use pen::PenClickConfig;
 pub use persistence::{OfflineProgressReport, PersistenceConfig};
-pub use prestige::{
-    default_permanent_upgrades, PermanentUpgradeConfig, PrestigeConfig,
-};
-pub use roster::{default_milestones, default_roster, ActivityConfig, Milestone};
-pub use stats::{default_productive_comparisons, ExistentialStats, ProductiveComparison};
+pub use prestige::{PermanentUpgradeConfig, PrestigeConfig, default_permanent_upgrades};
+pub use roster::{ActivityConfig, Milestone, default_milestones, default_roster};
+pub use stats::{ExistentialStats, ProductiveComparison, default_productive_comparisons};
 pub use view::ActiveView;
 
 /// Extensible identifier for in-game resources.
@@ -82,7 +80,11 @@ impl Generator {
     }
 
     pub fn tick(&mut self, dt: f64) -> u64 {
-        if !dt.is_finite() || dt <= 0.0 || !self.target_duration.is_finite() || self.target_duration <= 0.0 {
+        if !dt.is_finite()
+            || dt <= 0.0
+            || !self.target_duration.is_finite()
+            || self.target_duration <= 0.0
+        {
             return 0;
         }
 
@@ -417,7 +419,9 @@ fn default_prng_seed() -> u64 {
 }
 
 fn next_random_f64(seed: &mut u64) -> f64 {
-    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     ((*seed >> 11) as f64) / ((1u64 << 53) as f64)
 }
 
@@ -432,7 +436,10 @@ impl GameState {
     /// The first activity starts at level 1 (unlocked), the rest at level 0 (locked).
     #[must_use]
     pub fn new() -> Self {
-        let activities = default_roster().into_iter().map(ActivityState::new).collect();
+        let activities = default_roster()
+            .into_iter()
+            .map(ActivityState::new)
+            .collect();
         let mut state = Self {
             sloth_points: 0.0,
             lifetime_sloth_points: 0.0,
@@ -631,7 +638,9 @@ impl GameState {
     /// Returns the combined multiplier: Prestige * Achievements * Frenzy.
     #[must_use]
     pub fn total_multiplier(&self) -> f64 {
-        self.prestige_multiplier() * self.achievements_multiplier() * self.current_frenzy_multiplier()
+        self.prestige_multiplier()
+            * self.achievements_multiplier()
+            * self.current_frenzy_multiplier()
     }
 
     /// Returns the aggregate base production rate in points per second across all unlocked activities
@@ -665,7 +674,10 @@ impl GameState {
         }
 
         let roster = default_permanent_upgrades();
-        if let Some(upgrade) = roster.iter().find(|u| u.id == id && self.epiphanies >= u.cost_epiphanies) {
+        if let Some(upgrade) = roster
+            .iter()
+            .find(|u| u.id == id && self.epiphanies >= u.cost_epiphanies)
+        {
             self.epiphanies -= upgrade.cost_epiphanies;
             self.purchased_permanent_upgrades.insert(id.to_string());
             self.apply_permanent_upgrade_effects();
@@ -798,7 +810,8 @@ impl GameState {
         let achieve_mult = self.achievements_multiplier();
         let frenzy_mult = self.current_frenzy_multiplier();
         let scaling = 1.0 + self.lifetime_sloth_points * self.pen_config.lifetime_scaling_factor;
-        let earned = self.pen_config.base_reward * scaling * prestige_mult * achieve_mult * frenzy_mult;
+        let earned =
+            self.pen_config.base_reward * scaling * prestige_mult * achieve_mult * frenzy_mult;
 
         self.sloth_points += earned;
         self.lifetime_sloth_points += earned;
@@ -821,8 +834,10 @@ impl GameState {
         }
 
         let sound = if !self.pen_config.sound_effects.is_empty() {
-            let s = self.pen_config.sound_effects[self.last_pen_sound_index % self.pen_config.sound_effects.len()];
-            self.last_pen_sound_index = (self.last_pen_sound_index + 1) % self.pen_config.sound_effects.len();
+            let s = self.pen_config.sound_effects
+                [self.last_pen_sound_index % self.pen_config.sound_effects.len()];
+            self.last_pen_sound_index =
+                (self.last_pen_sound_index + 1) % self.pen_config.sound_effects.len();
             s
         } else {
             "*¡Clic!*"
@@ -894,7 +909,10 @@ impl GameState {
     /// If more than 60 seconds have elapsed since `last_save_timestamp`, computes
     /// accumulated points up to `max_offline_hours` at `offline_efficiency`, sets
     /// `active_view = ActiveView::WelcomeOfflineModal`, and returns an `OfflineProgressReport`.
-    pub fn process_offline_progress(&mut self, current_timestamp: u64) -> Option<OfflineProgressReport> {
+    pub fn process_offline_progress(
+        &mut self,
+        current_timestamp: u64,
+    ) -> Option<OfflineProgressReport> {
         if self.last_save_timestamp == 0 {
             self.last_save_timestamp = current_timestamp;
             return None;
@@ -947,9 +965,13 @@ impl GameState {
                 AchievementCondition::TotalPenClicks(req) => {
                     self.existential_stats.total_pen_clicks >= req
                 }
-                AchievementCondition::ReachLevel { activity_index, level } => {
-                    self.activities.get(activity_index).is_some_and(|a| a.level >= level)
-                }
+                AchievementCondition::ReachLevel {
+                    activity_index,
+                    level,
+                } => self
+                    .activities
+                    .get(activity_index)
+                    .is_some_and(|a| a.level >= level),
                 AchievementCondition::TotalPrestiges(req) => {
                     self.existential_stats.total_prestiges >= req
                 }
@@ -1137,7 +1159,10 @@ mod tests {
 
         // Remaining activities must be level 0 (locked)
         for (i, activity) in state.activities.iter().enumerate().skip(1) {
-            assert_eq!(activity.level, 0, "Activity at index {i} should be level 0 initially");
+            assert_eq!(
+                activity.level, 0,
+                "Activity at index {i} should be level 0 initially"
+            );
             assert!(!activity.is_unlocked());
             assert!((activity.progress - 0.0).abs() < EPSILON);
         }
@@ -1342,12 +1367,10 @@ mod tests {
             duration: 1.0,
             cost: 0.0,
             reward: 5.0,
-            milestones: vec![
-                Milestone {
-                    level: 10,
-                    speed_multiplier: 10.0, // duration becomes 0.1s <= 0.15s (Turbo)
-                },
-            ],
+            milestones: vec![Milestone {
+                level: 10,
+                speed_multiplier: 10.0, // duration becomes 0.1s <= 0.15s (Turbo)
+            }],
         });
 
         // Level 1: duration = 1.0s, reward = 5.0 -> not turbo, pts/s = 5.0
@@ -1543,7 +1566,9 @@ mod tests {
         assert!((state.prestige_multiplier() - 2.0).abs() < EPSILON);
 
         // With zen_enlightenment bonus = 0.15: 1.0 + 10 * 0.15 = 2.5 (+150%)
-        state.purchased_permanent_upgrades.insert("zen_enlightenment".to_string());
+        state
+            .purchased_permanent_upgrades
+            .insert("zen_enlightenment".to_string());
         assert!((state.prestige_multiplier() - 2.5).abs() < EPSILON);
     }
 
@@ -1608,7 +1633,9 @@ mod tests {
     fn test_muscle_memory_effect() {
         let mut state = GameState::new();
         state.lifetime_sloth_points = 1000.0;
-        state.purchased_permanent_upgrades.insert("muscle_memory".to_string());
+        state
+            .purchased_permanent_upgrades
+            .insert("muscle_memory".to_string());
 
         assert!(state.trigger_prestige());
         // Activity 0 should start at level 10 with muscle_memory
@@ -1961,7 +1988,10 @@ mod tests {
         // Initially, only activity 0 is revealed
         assert!(state.activities[0].is_revealed);
         for i in 1..state.activities.len() {
-            assert!(!state.activities[i].is_revealed, "Activity {i} should be hidden initially");
+            assert!(
+                !state.activities[i].is_revealed,
+                "Activity {i} should be hidden initially"
+            );
         }
 
         // Cannot upgrade locked & hidden activity 1 even if key is pressed
@@ -2005,13 +2035,19 @@ mod tests {
         state.lifetime_sloth_points = 1000.0;
         assert_eq!(state.claimable_epiphanies(), 1);
         state.check_reveals();
-        assert!(!state.prestige_revealed, "Prestige should not reveal with only 1 claimable Epiphany");
+        assert!(
+            !state.prestige_revealed,
+            "Prestige should not reveal with only 1 claimable Epiphany"
+        );
 
         // Accumulate 4000 points (2 Epiphanies claimable, enough for muscle_memory)
         state.lifetime_sloth_points = 4000.0;
         assert_eq!(state.claimable_epiphanies(), 2);
         state.check_reveals();
-        assert!(state.prestige_revealed, "Prestige should reveal once 2 Epiphanies can be claimed");
+        assert!(
+            state.prestige_revealed,
+            "Prestige should reveal once 2 Epiphanies can be claimed"
+        );
 
         // Trigger prestige
         assert!(state.trigger_prestige());
@@ -2067,7 +2103,11 @@ mod tests {
         assert!(state.claim_distraction().is_some());
         let warp_feedback = state.last_claimed_distraction.as_ref().unwrap();
         assert_eq!(warp_feedback.title, "Pereza Instantánea");
-        assert!(warp_feedback.effect_summary.contains("15 min de producción"));
+        assert!(
+            warp_feedback
+                .effect_summary
+                .contains("15 min de producción")
+        );
         assert!(warp_feedback.effect_summary.contains("Puntos de Flojera"));
     }
 }

@@ -1,5 +1,10 @@
 # Mucking Around — El Arte de la Procrastinación Zen 🦥
 
+[![CI](https://github.com/coins5/mucking-around/actions/workflows/ci.yml/badge.svg)](https://github.com/coins5/mucking-around/actions/workflows/ci.yml)
+[![Release](https://github.com/coins5/mucking-around/actions/workflows/release.yml/badge.svg)](https://github.com/coins5/mucking-around/releases)
+[![Web Demo](https://img.shields.io/badge/Web-Jugar_Online-blue?logo=webassembly&logoColor=white)](https://coins5.github.io/mucking-around/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Un juego incremental / *idle game* desarrollado en **Rust**, presentado en la terminal con gráficos de texto ASCII y barras de progreso fluidas usando caracteres de sub-bloques Unicode (con 8 niveles de granularidad por celda).
 
 El objetivo es simple: acumular **Puntos de Flojera** (*Sloth Points*), desbloquear y optimizar actividades de procrastinación cotidiana, hacer clic compulsivo en un lapicero, reclamar distracciones espontáneas y, eventualmente, alcanzar una **Crisis Existencial** para renacer con **Epifanías** que potencian permanentemente tu desgano productivo.

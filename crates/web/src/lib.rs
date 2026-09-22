@@ -100,9 +100,10 @@ impl WebGame {
             ActiveView::PermanentUpgradesShop => {
                 ui_text::render_upgrades_frame(&self.state, &self.permanent_upgrades)
             }
-            ActiveView::ExistentialStats => {
-                ui_text::render_stats_frame(&self.state.existential_stats, &self.productive_comparisons)
-            }
+            ActiveView::ExistentialStats => ui_text::render_stats_frame(
+                &self.state.existential_stats,
+                &self.productive_comparisons,
+            ),
             ActiveView::AchievementsGallery => {
                 ui_text::render_achievements_frame(&self.state, &self.achievements)
             }
@@ -405,7 +406,11 @@ impl WebGame {
 
     /// Number of revealed activities.
     pub fn revealed_activities_count(&self) -> usize {
-        self.state.activities.iter().filter(|a| a.is_revealed).count()
+        self.state
+            .activities
+            .iter()
+            .filter(|a| a.is_revealed)
+            .count()
     }
 
     /// Number of revealed permanent upgrades in the shop.
@@ -418,7 +423,10 @@ impl WebGame {
 
     /// Whether an activity at the given 0-based index is currently revealed (Fog of War).
     pub fn is_activity_revealed(&self, index: usize) -> bool {
-        self.state.activities.get(index).is_some_and(|a| a.is_revealed)
+        self.state
+            .activities
+            .get(index)
+            .is_some_and(|a| a.is_revealed)
     }
 
     /// Whether a permanent upgrade at the given 0-based index is currently revealed in the shop.
@@ -490,11 +498,12 @@ mod tests {
         game.click_pen();
         let pts_before = game.sloth_points();
 
-        let exported = game.export_save_json(1050.0).expect("export should succeed");
+        let exported = game
+            .export_save_json(1050.0)
+            .expect("export should succeed");
         assert!(exported.contains("sloth_points"));
 
         let imported = WebGame::from_save(&exported, 1050.0).expect("import should succeed");
         assert_eq!(imported.sloth_points(), pts_before);
     }
 }
-

@@ -123,3 +123,18 @@ make web-serve     # Serve web version at http://localhost:8080
 make web           # Build and serve web version
 make clean         # Clean build artifacts
 ```
+
+---
+
+## Release & Versioning Policy
+
+- **Workspace Version Inheritance:**
+  - All crates inherit their version from `[workspace.package].version` in root `Cargo.toml`.
+  - When releasing a new version, bump the single `version` field in root `Cargo.toml`.
+- **Automated Releases on Master:**
+  - Merging or pushing to `master` triggers `.github/workflows/release.yml`.
+  - The workflow automatically packages multi-platform binaries (Linux x86_64, macOS Apple Silicon, macOS Intel, Windows x64, and Web bundle) and attaches them to a GitHub Release corresponding to `v<version>`.
+- **Continuous Integration (CI):**
+  - All pull requests and pushes to `dev` and `master` must pass `.github/workflows/ci.yml` (formatting, compilation check, clippy with zero warnings, test suite, and WASM build).
+- **GitHub Pages:**
+  - Pushes to `master` automatically deploy the WASM application to GitHub Pages via `.github/workflows/pages.yml`.

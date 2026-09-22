@@ -8,7 +8,10 @@ pub enum DistractionRewardType {
     /// Multiplies all production for a specific duration in seconds.
     Frenzy { multiplier: f64, duration_secs: f64 },
     /// Grants a percentage of current balance or a minimum flat amount (whichever is greater).
-    InstantSloth { percentage_of_current: f64, min_flat: f64 },
+    InstantSloth {
+        percentage_of_current: f64,
+        min_flat: f64,
+    },
     /// Simulates the instantaneous passage of N seconds of production across active bars.
     TimeWarp { simulated_seconds: f64 },
 }

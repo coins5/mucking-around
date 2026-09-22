@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::io::{stdout, IsTerminal, Write};
+use std::io::{IsTerminal, Write, stdout};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -9,7 +9,7 @@ use crossterm::{
     cursor::{self, Hide, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
 
 const TARGET_FPS: u64 = 60;
@@ -246,9 +246,15 @@ fn main() -> Result<()> {
             ActiveView::WelcomeOfflineModal => {
                 "\r\nControles: [Cualquier tecla / Esc / Espacio] Continuar al juego\r".to_string()
             }
-            ActiveView::PrestigeDialog => "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r".to_string(),
+            ActiveView::PrestigeDialog => {
+                "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r".to_string()
+            }
             ActiveView::PermanentUpgradesShop => {
-                let count = permanent_upgrades.iter().filter(|u| game.is_permanent_upgrade_revealed(u.id)).count().max(1);
+                let count = permanent_upgrades
+                    .iter()
+                    .filter(|u| game.is_permanent_upgrade_revealed(u.id))
+                    .count()
+                    .max(1);
                 let keys = if count == 1 {
                     "[1] Comprar Mejora".to_string()
                 } else {
@@ -256,10 +262,19 @@ fn main() -> Result<()> {
                 };
                 format!("\r\nControles: {keys} | [U / Esc / q] Volver al juego\r")
             }
-            ActiveView::ExistentialStats => "\r\nControles: [S / Esc / q] Volver al juego\r".to_string(),
-            ActiveView::AchievementsGallery => "\r\nControles: [A / Esc / q] Volver al juego\r".to_string(),
+            ActiveView::ExistentialStats => {
+                "\r\nControles: [S / Esc / q] Volver al juego\r".to_string()
+            }
+            ActiveView::AchievementsGallery => {
+                "\r\nControles: [A / Esc / q] Volver al juego\r".to_string()
+            }
             ActiveView::MainDashboard => {
-                let num_revealed = game.activities.iter().filter(|a| a.is_revealed).count().max(1);
+                let num_revealed = game
+                    .activities
+                    .iter()
+                    .filter(|a| a.is_revealed)
+                    .count()
+                    .max(1);
                 let act_keys = if num_revealed == 1 {
                     "[1] Mejorar".to_string()
                 } else {
@@ -270,7 +285,9 @@ fn main() -> Result<()> {
                 } else {
                     ""
                 };
-                format!("\r\nControles: [Espacio] Lapicero / Reclamar | {act_keys}{prestige_keys} | [S] Estadísticas | [A] Logros | [q / Esc] Salir\r")
+                format!(
+                    "\r\nControles: [Espacio] Lapicero / Reclamar | {act_keys}{prestige_keys} | [S] Estadísticas | [A] Logros | [q / Esc] Salir\r"
+                )
             }
         };
         println!("{controls}");
