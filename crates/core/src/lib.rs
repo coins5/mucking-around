@@ -1,15 +1,30 @@
 #![forbid(unsafe_code)]
 
+pub mod achievements;
+pub mod distraction;
+pub mod pen;
+pub mod persistence;
 pub mod prestige;
 pub mod roster;
+pub mod stats;
+pub mod view;
 
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
+pub use achievements::{default_achievements, AchievementCondition, AchievementConfig};
+pub use distraction::{
+    default_distractions, ActiveDistractionState, DistractionConfig, DistractionRewardType,
+    DistractionSystemConfig,
+};
+pub use pen::PenClickConfig;
+pub use persistence::{OfflineProgressReport, PersistenceConfig};
 pub use prestige::{
     default_permanent_upgrades, PermanentUpgradeConfig, PrestigeConfig,
 };
 pub use roster::{default_milestones, default_roster, ActivityConfig, Milestone};
+pub use stats::{default_productive_comparisons, ExistentialStats, ProductiveComparison};
+pub use view::ActiveView;
 
 /// Extensible identifier for in-game resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -264,7 +279,7 @@ impl ActivityState {
 }
 
 /// Explicit action intent to drive deterministic state mutations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     /// Attempt to upgrade/unlock an activity at the given roster index.
     UpgradeActivity(usize),
@@ -286,6 +301,14 @@ pub enum Action {
     CloseUpgradeMenu,
     /// Toggle the permanent upgrade menu.
     ToggleUpgradeMenu,
+    /// Perform an active pen click.
+    PenClick,
+    /// Claim currently active distraction.
+    ClaimDistraction,
+    /// Set current active view screen/modal.
+    SetView(ActiveView),
+    /// Return to main dashboard view.
+    CloseView,
 }
 
 /// The game state managing procrastination activities, Sloth Points, and Epiphanies.
@@ -313,6 +336,72 @@ pub struct GameState {
     /// Indicates whether the Zen Enlightenment (permanent upgrades) menu is open.
     #[serde(default)]
     pub in_upgrade_menu: bool,
+
+    /// Existential metrics tracked across all actions and ticks.
+    #[serde(default)]
+    pub existential_stats: ExistentialStats,
+    /// Currently active unexpected distraction event, if any.
+    #[serde(default)]
+    pub active_distraction: Option<ActiveDistractionState>,
+    /// Configuration for random distraction spawning.
+    #[serde(default)]
+    pub distraction_config: DistractionSystemConfig,
+    /// Countdown timer in seconds until next distraction spawn attempt.
+    #[serde(default = "default_distraction_spawn_timer")]
+    pub distraction_spawn_timer: f64,
+    /// Temporary multiplier from active frenzy distractions.
+    #[serde(default = "default_frenzy_multiplier")]
+    pub frenzy_multiplier: f64,
+    /// Remaining duration in seconds of the current frenzy effect.
+    #[serde(default)]
+    pub frenzy_timer: f64,
+    /// Set of unique identifiers of unlocked achievements.
+    #[serde(default)]
+    pub unlocked_achievements: HashSet<String>,
+    /// Configuration roster of all available achievements.
+    #[serde(default = "default_achievements")]
+    pub achievement_roster: Vec<AchievementConfig>,
+    /// Configuration for active pen click habit mechanics.
+    #[serde(default)]
+    pub pen_config: PenClickConfig,
+    /// Index tracking the last played onomatopoeia.
+    #[serde(default)]
+    pub last_pen_sound_index: usize,
+    /// Last played onomatopoeia sound text for visual UI feedback.
+    #[serde(default)]
+    pub last_pen_sound: Option<String>,
+    /// Configuration for auto-saving and offline progression.
+    #[serde(default)]
+    pub persistence_config: PersistenceConfig,
+    /// Unix timestamp in seconds of the last recorded save/tick.
+    #[serde(default)]
+    pub last_save_timestamp: u64,
+    /// Current active modal or screen view.
+    #[serde(default)]
+    pub active_view: ActiveView,
+    /// Last generated report for offline absence progress.
+    #[serde(default)]
+    pub offline_report: Option<OfflineProgressReport>,
+    /// Deterministic pseudo-random seed state.
+    #[serde(default = "default_prng_seed")]
+    pub prng_seed: u64,
+}
+
+fn default_distraction_spawn_timer() -> f64 {
+    60.0
+}
+
+fn default_frenzy_multiplier() -> f64 {
+    1.0
+}
+
+fn default_prng_seed() -> u64 {
+    6364136223846793005
+}
+
+fn next_random_f64(seed: &mut u64) -> f64 {
+    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    ((*seed >> 11) as f64) / ((1u64 << 53) as f64)
 }
 
 impl Default for GameState {
@@ -327,7 +416,7 @@ impl GameState {
     #[must_use]
     pub fn new() -> Self {
         let activities = default_roster().into_iter().map(ActivityState::new).collect();
-        Self {
+        let mut state = Self {
             sloth_points: 0.0,
             lifetime_sloth_points: 0.0,
             epiphanies: 0,
@@ -338,7 +427,34 @@ impl GameState {
             activities,
             in_prestige_dialog: false,
             in_upgrade_menu: false,
-        }
+
+            existential_stats: ExistentialStats::default(),
+            active_distraction: None,
+            distraction_config: DistractionSystemConfig::default(),
+            distraction_spawn_timer: 60.0,
+            frenzy_multiplier: 1.0,
+            frenzy_timer: 0.0,
+            unlocked_achievements: HashSet::new(),
+            achievement_roster: default_achievements(),
+            pen_config: PenClickConfig::default(),
+            last_pen_sound_index: 0,
+            last_pen_sound: None,
+            persistence_config: PersistenceConfig::default(),
+            last_save_timestamp: 0,
+            active_view: ActiveView::MainDashboard,
+            offline_report: None,
+            prng_seed: default_prng_seed(),
+        };
+        state.reset_distraction_spawn_timer();
+        state
+    }
+
+    /// Resets the distraction countdown timer to a deterministic pseudo-random duration.
+    pub fn reset_distraction_spawn_timer(&mut self) {
+        let min = self.distraction_config.min_spawn_interval;
+        let max = self.distraction_config.max_spawn_interval;
+        let r = next_random_f64(&mut self.prng_seed);
+        self.distraction_spawn_timer = min + r * (max - min).max(0.0);
     }
 
     /// Attempts to upgrade (or unlock) the activity at `index`.
@@ -352,6 +468,7 @@ impl GameState {
             if self.sloth_points >= cost {
                 self.sloth_points -= cost;
                 activity.level += 1;
+                self.check_achievements();
                 return true;
             }
         }
@@ -404,6 +521,47 @@ impl GameState {
             self.prestige_config.default_bonus_per_point
         };
         1.0 + (self.epiphanies as f64 * bonus)
+    }
+
+    /// Returns the total cumulative passive bonus granted by unlocked achievements.
+    #[must_use]
+    pub fn achievements_multiplier(&self) -> f64 {
+        let mut bonus = 0.0;
+        for ach in &self.achievement_roster {
+            if self.unlocked_achievements.contains(ach.id) {
+                bonus += ach.bonus_multiplier;
+            }
+        }
+        1.0 + bonus
+    }
+
+    /// Returns the active frenzy multiplier if active, otherwise 1.0.
+    #[must_use]
+    pub fn current_frenzy_multiplier(&self) -> f64 {
+        if self.frenzy_timer > 0.0 {
+            self.frenzy_multiplier.max(1.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// Returns the combined multiplier: Prestige * Achievements * Frenzy.
+    #[must_use]
+    pub fn total_multiplier(&self) -> f64 {
+        self.prestige_multiplier() * self.achievements_multiplier() * self.current_frenzy_multiplier()
+    }
+
+    /// Returns the aggregate base production rate in points per second across all unlocked activities
+    /// scaled by prestige and achievements multipliers.
+    #[must_use]
+    pub fn total_pts_per_second(&self) -> f64 {
+        let base_rate: f64 = self
+            .activities
+            .iter()
+            .filter(|a| a.is_unlocked())
+            .map(|a| a.pts_per_second())
+            .sum();
+        base_rate * self.prestige_multiplier() * self.achievements_multiplier()
     }
 
     /// Returns whether a permanent upgrade with the given ID has been purchased.
@@ -462,6 +620,8 @@ impl GameState {
     /// - Remaining activities are reset to level 0 (locked).
     /// - All activity cycle progress is reset to 0.0.
     /// - Resets `autopilot_timer` to 0.0.
+    /// - Clears temporary distraction and frenzy states.
+    /// - Increments total prestiges counter.
     /// - Re-applies active permanent upgrade effects.
     /// - Returns `true`.
     pub fn trigger_prestige(&mut self) -> bool {
@@ -474,6 +634,9 @@ impl GameState {
         self.total_epiphanies_earned += to_claim;
         self.sloth_points = 0.0;
         self.autopilot_timer = 0.0;
+        self.frenzy_timer = 0.0;
+        self.active_distraction = None;
+        self.existential_stats.total_prestiges += 1;
 
         let first_level = if self.has_permanent_upgrade("muscle_memory") {
             10
@@ -487,23 +650,30 @@ impl GameState {
         }
 
         self.apply_permanent_upgrade_effects();
+        self.check_achievements();
         true
+    }
+
+    /// Changes the active view mode and synchronizes legacy modal flags.
+    pub fn set_view(&mut self, view: ActiveView) {
+        self.active_view = view;
+        self.in_prestige_dialog = view == ActiveView::PrestigeDialog;
+        self.in_upgrade_menu = view == ActiveView::PermanentUpgradesShop;
     }
 
     /// Opens the Existential Crisis confirmation dialog.
     pub fn open_prestige_dialog(&mut self) {
-        self.in_prestige_dialog = true;
-        self.in_upgrade_menu = false;
+        self.set_view(ActiveView::PrestigeDialog);
     }
 
     /// Closes the Existential Crisis confirmation dialog.
     pub fn close_prestige_dialog(&mut self) {
-        self.in_prestige_dialog = false;
+        self.set_view(ActiveView::MainDashboard);
     }
 
     /// Confirms prestige from the dialog: closes the dialog and triggers prestige.
     pub fn confirm_prestige(&mut self) -> bool {
-        self.in_prestige_dialog = false;
+        self.close_prestige_dialog();
         self.trigger_prestige()
     }
 
@@ -514,21 +684,184 @@ impl GameState {
 
     /// Opens the permanent upgrades shop menu.
     pub fn open_upgrade_menu(&mut self) {
-        self.in_upgrade_menu = true;
-        self.in_prestige_dialog = false;
+        self.set_view(ActiveView::PermanentUpgradesShop);
     }
 
     /// Closes the permanent upgrades shop menu.
     pub fn close_upgrade_menu(&mut self) {
-        self.in_upgrade_menu = false;
+        self.set_view(ActiveView::MainDashboard);
     }
 
     /// Toggles the permanent upgrades shop menu open or closed.
     pub fn toggle_upgrade_menu(&mut self) {
-        self.in_upgrade_menu = !self.in_upgrade_menu;
-        if self.in_upgrade_menu {
-            self.in_prestige_dialog = false;
+        if self.active_view == ActiveView::PermanentUpgradesShop {
+            self.set_view(ActiveView::MainDashboard);
+        } else {
+            self.set_view(ActiveView::PermanentUpgradesShop);
         }
+    }
+
+    /// Executes the active manual "Pen Click" habit action.
+    ///
+    /// - Adds points scaled by lifetime points, prestige, achievements, and frenzy.
+    /// - Advances progress by 2% on the unlocked activity closest to completing.
+    /// - Cycles through humorous rotating onomatopoeias.
+    /// - Evaluates achievements.
+    pub fn pen_click(&mut self) -> (f64, &'static str) {
+        let prestige_mult = self.prestige_multiplier();
+        let achieve_mult = self.achievements_multiplier();
+        let frenzy_mult = self.current_frenzy_multiplier();
+        let scaling = 1.0 + self.lifetime_sloth_points * self.pen_config.lifetime_scaling_factor;
+        let earned = self.pen_config.base_reward * scaling * prestige_mult * achieve_mult * frenzy_mult;
+
+        self.sloth_points += earned;
+        self.lifetime_sloth_points += earned;
+        self.existential_stats.total_sloth_points_earned += earned;
+        self.existential_stats.total_pen_clicks += 1;
+
+        // Advance 2% duration on the unlocked activity closest to completing
+        let closest_idx = self
+            .activities
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.is_unlocked())
+            .min_by(|(_, a), (_, b)| a.remaining_time().total_cmp(&b.remaining_time()))
+            .map(|(i, _)| i);
+
+        if let Some(idx) = closest_idx {
+            let act = &mut self.activities[idx];
+            let boost = act.current_duration() * self.pen_config.bar_speedup_percentage;
+            act.progress = (act.progress + boost).min(act.current_duration());
+        }
+
+        let sound = if !self.pen_config.sound_effects.is_empty() {
+            let s = self.pen_config.sound_effects[self.last_pen_sound_index % self.pen_config.sound_effects.len()];
+            self.last_pen_sound_index = (self.last_pen_sound_index + 1) % self.pen_config.sound_effects.len();
+            s
+        } else {
+            "*¡Clic!*"
+        };
+        self.last_pen_sound = Some(sound.to_string());
+
+        self.check_achievements();
+        (earned, sound)
+    }
+
+    /// Claims the currently active distraction event, applying its effect immediately.
+    ///
+    /// Returns `Some(DistractionRewardType)` if an active distraction was claimed, or `None`.
+    pub fn claim_distraction(&mut self) -> Option<DistractionRewardType> {
+        let active = self.active_distraction.take()?;
+        self.existential_stats.total_distractions_claimed += 1;
+
+        match &active.config.reward {
+            DistractionRewardType::Frenzy {
+                multiplier,
+                duration_secs,
+            } => {
+                self.frenzy_multiplier = *multiplier;
+                self.frenzy_timer = *duration_secs;
+            }
+            DistractionRewardType::InstantSloth {
+                percentage_of_current,
+                min_flat,
+            } => {
+                let pts = (self.sloth_points * percentage_of_current).max(*min_flat);
+                self.sloth_points += pts;
+                self.lifetime_sloth_points += pts;
+                self.existential_stats.total_sloth_points_earned += pts;
+            }
+            DistractionRewardType::TimeWarp { simulated_seconds } => {
+                let rate = self.total_pts_per_second();
+                let pts = rate * simulated_seconds * self.current_frenzy_multiplier();
+                self.sloth_points += pts;
+                self.lifetime_sloth_points += pts;
+                self.existential_stats.total_sloth_points_earned += pts;
+            }
+        }
+
+        self.reset_distraction_spawn_timer();
+        self.check_achievements();
+        Some(active.config.reward)
+    }
+
+    /// Evaluates and applies offline progress deterministically in O(1) time
+    /// using external Unix timestamps.
+    ///
+    /// If more than 60 seconds have elapsed since `last_save_timestamp`, computes
+    /// accumulated points up to `max_offline_hours` at `offline_efficiency`, sets
+    /// `active_view = ActiveView::WelcomeOfflineModal`, and returns an `OfflineProgressReport`.
+    pub fn process_offline_progress(&mut self, current_timestamp: u64) -> Option<OfflineProgressReport> {
+        if self.last_save_timestamp == 0 {
+            self.last_save_timestamp = current_timestamp;
+            return None;
+        }
+
+        let delta_secs = current_timestamp.saturating_sub(self.last_save_timestamp) as f64;
+        self.last_save_timestamp = current_timestamp;
+
+        if delta_secs > 60.0 {
+            let rate = self.total_pts_per_second();
+            let max_secs = self.persistence_config.max_offline_hours * 3600.0;
+            let effective_secs = delta_secs.min(max_secs);
+            let pts = rate * effective_secs * self.persistence_config.offline_efficiency;
+
+            self.sloth_points += pts;
+            self.lifetime_sloth_points += pts;
+            self.existential_stats.total_sloth_points_earned += pts;
+
+            let report = OfflineProgressReport {
+                elapsed_seconds: delta_secs,
+                offline_efficiency: self.persistence_config.offline_efficiency,
+                points_earned: pts,
+            };
+            self.offline_report = Some(report.clone());
+            self.set_view(ActiveView::WelcomeOfflineModal);
+            Some(report)
+        } else {
+            None
+        }
+    }
+
+    /// Checks all configured achievements and unlocks any whose conditions have been satisfied.
+    /// Returns the list of newly unlocked achievement IDs.
+    pub fn check_achievements(&mut self) -> Vec<&'static str> {
+        let mut newly_unlocked = Vec::new();
+        let num_turbo = self
+            .activities
+            .iter()
+            .filter(|a| a.is_unlocked() && a.is_turbo())
+            .count();
+
+        for ach in &self.achievement_roster {
+            if self.unlocked_achievements.contains(ach.id) {
+                continue;
+            }
+
+            let condition_met = match ach.condition {
+                AchievementCondition::TotalSlothPoints(req) => self.lifetime_sloth_points >= req,
+                AchievementCondition::TotalPenClicks(req) => {
+                    self.existential_stats.total_pen_clicks >= req
+                }
+                AchievementCondition::ReachLevel { activity_index, level } => {
+                    self.activities.get(activity_index).is_some_and(|a| a.level >= level)
+                }
+                AchievementCondition::TotalPrestiges(req) => {
+                    self.existential_stats.total_prestiges >= req
+                }
+                AchievementCondition::SimultaneousTurbo(req) => num_turbo >= req,
+            };
+
+            if condition_met {
+                newly_unlocked.push(ach.id);
+            }
+        }
+
+        for id in &newly_unlocked {
+            self.unlocked_achievements.insert(id.to_string());
+        }
+
+        newly_unlocked
     }
 
     /// Attempts to buy 1 level of the unlocked activity with the lowest upgrade cost.
@@ -577,21 +910,66 @@ impl GameState {
                 self.toggle_upgrade_menu();
                 true
             }
+            Action::PenClick => {
+                self.pen_click();
+                true
+            }
+            Action::ClaimDistraction => self.claim_distraction().is_some(),
+            Action::SetView(view) => {
+                self.set_view(view);
+                true
+            }
+            Action::CloseView => {
+                self.set_view(ActiveView::MainDashboard);
+                true
+            }
         }
     }
 
     /// Advances the simulation by `dt` seconds deterministically.
     ///
+    /// - Increments active play time in existential stats.
+    /// - Decays temporary frenzy effects.
+    /// - Advances active distraction decay or spawns new distraction if timer reaches zero.
     /// - Applies permanent upgrade effects.
     /// - If "autopilot" is owned, advances `autopilot_timer` and buys cheapest unlocked activity every 2.0s.
-    /// - Progresses unlocked activities; completed cycles award `current_reward * cycles * prestige_multiplier()`.
-    /// - Awards are added to both `sloth_points` and `lifetime_sloth_points`.
+    /// - Progresses unlocked activities; completed cycles award:
+    ///   `current_reward * cycles * prestige_multiplier() * achievements_multiplier() * frenzy_multiplier()`.
+    /// - Checks achievements.
     pub fn tick(&mut self, dt: f64) {
         if !dt.is_finite() || dt <= 0.0 {
             return;
         }
 
+        self.existential_stats.total_seconds_played += dt;
+
         self.apply_permanent_upgrade_effects();
+
+        // Decay frenzy multiplier timer
+        if self.frenzy_timer > 0.0 {
+            self.frenzy_timer = (self.frenzy_timer - dt).max(0.0);
+        }
+
+        // Handle distraction decay or spawn
+        if let Some(ref mut distraction) = self.active_distraction {
+            distraction.time_remaining -= dt;
+            if distraction.time_remaining <= 0.0 {
+                self.active_distraction = None;
+                self.reset_distraction_spawn_timer();
+            }
+        } else {
+            self.distraction_spawn_timer -= dt;
+            if self.distraction_spawn_timer <= 0.0 {
+                if !self.distraction_config.roster.is_empty() {
+                    let r = next_random_f64(&mut self.prng_seed);
+                    let roster_len = self.distraction_config.roster.len();
+                    let idx = ((r * roster_len as f64).floor() as usize).min(roster_len - 1);
+                    let chosen = self.distraction_config.roster[idx].clone();
+                    self.active_distraction = Some(ActiveDistractionState::new(chosen));
+                }
+                self.reset_distraction_spawn_timer();
+            }
+        }
 
         if self.has_permanent_upgrade("autopilot") {
             self.autopilot_timer += dt;
@@ -603,7 +981,7 @@ impl GameState {
             self.autopilot_timer = 0.0;
         }
 
-        let mult = self.prestige_multiplier();
+        let mult = self.total_multiplier();
         for activity in &mut self.activities {
             if activity.level == 0 {
                 continue;
@@ -622,11 +1000,15 @@ impl GameState {
                 let gained = activity.current_reward() * cycles * mult;
                 self.sloth_points += gained;
                 self.lifetime_sloth_points += gained;
+                self.existential_stats.total_sloth_points_earned += gained;
+                self.existential_stats.total_bars_completed += cycles as u64;
             }
 
             // Ensure progress is clamped to prevent negative precision drift or overflow
             activity.progress = activity.progress.clamp(0.0, duration);
         }
+
+        self.check_achievements();
     }
 }
 
@@ -1206,5 +1588,264 @@ mod tests {
         assert_traits::<PermanentUpgradeConfig>();
         assert_traits::<Action>();
         assert_traits::<GameState>();
+        assert_traits::<DistractionConfig>();
+        assert_traits::<DistractionSystemConfig>();
+        assert_traits::<ActiveDistractionState>();
+        assert_traits::<OfflineProgressReport>();
+        assert_traits::<PersistenceConfig>();
+        assert_traits::<PenClickConfig>();
+        assert_traits::<ExistentialStats>();
+        assert_traits::<ProductiveComparison>();
+        assert_traits::<AchievementConfig>();
+        assert_traits::<ActiveView>();
+    }
+
+    #[test]
+    fn test_distraction_spawn_and_decay() {
+        let mut state = GameState::new();
+        state.distraction_spawn_timer = 2.0;
+        assert!(state.active_distraction.is_none());
+
+        // Tick 1.0s: still counting down
+        state.tick(1.0);
+        assert!(state.active_distraction.is_none());
+        assert!((state.distraction_spawn_timer - 1.0).abs() < EPSILON);
+
+        // Tick 1.0s: reaches 0 -> spawns distraction
+        state.tick(1.0);
+        assert!(state.active_distraction.is_some());
+        let initial_remaining = state.active_distraction.as_ref().unwrap().time_remaining;
+        assert!(initial_remaining > 0.0);
+
+        // Tick 1.0s: time remaining decreases
+        state.tick(1.0);
+        assert!(state.active_distraction.is_some());
+        let new_remaining = state.active_distraction.as_ref().unwrap().time_remaining;
+        assert!((new_remaining - (initial_remaining - 1.0)).abs() < EPSILON);
+
+        // Advance past expiration: distraction decays and disappears
+        state.tick(10.0);
+        assert!(state.active_distraction.is_none());
+    }
+
+    #[test]
+    fn test_distraction_claim_frenzy() {
+        let mut state = GameState::new();
+        state.active_distraction = Some(ActiveDistractionState::new(DistractionConfig {
+            id: "test_frenzy",
+            title: "Test Frenzy",
+            description: "Test description",
+            time_to_claim: 5.0,
+            reward: DistractionRewardType::Frenzy {
+                multiplier: 7.0,
+                duration_secs: 25.0,
+            },
+        }));
+
+        assert_eq!(state.current_frenzy_multiplier(), 1.0);
+        let reward = state.claim_distraction();
+        assert!(matches!(reward, Some(DistractionRewardType::Frenzy { .. })));
+        assert!(state.active_distraction.is_none());
+        assert_eq!(state.existential_stats.total_distractions_claimed, 1);
+        assert_eq!(state.frenzy_multiplier, 7.0);
+        assert_eq!(state.frenzy_timer, 25.0);
+        assert_eq!(state.current_frenzy_multiplier(), 7.0);
+
+        // During frenzy, activity 0 completes a 5.0s cycle and yields 1.0 * 7.0 = 7.0 pts
+        state.tick(5.0);
+        assert!((state.sloth_points - 7.0).abs() < EPSILON);
+        assert!((state.frenzy_timer - 20.0).abs() < EPSILON);
+
+        // After frenzy expires (tick 20.0s)
+        state.tick(20.0);
+        assert_eq!(state.frenzy_timer, 0.0);
+        assert_eq!(state.current_frenzy_multiplier(), 1.0);
+    }
+
+    #[test]
+    fn test_distraction_claim_instant_sloth_and_timewarp() {
+        let mut state = GameState::new();
+        state.sloth_points = 1000.0;
+        state.active_distraction = Some(ActiveDistractionState::new(DistractionConfig {
+            id: "test_sloth",
+            title: "Meme",
+            description: "Desc",
+            time_to_claim: 5.0,
+            reward: DistractionRewardType::InstantSloth {
+                percentage_of_current: 0.20,
+                min_flat: 50.0,
+            },
+        }));
+
+        // 20% of 1000 = 200.0 (> min_flat 50.0)
+        assert!(state.claim_distraction().is_some());
+        assert!((state.sloth_points - 1200.0).abs() < EPSILON);
+
+        // TimeWarp: Activity 0 generates 1.0 pt / 5.0s = 0.20 pts/s (scaled by achievements)
+        let rate_before = state.total_pts_per_second();
+        state.active_distraction = Some(ActiveDistractionState::new(DistractionConfig {
+            id: "test_warp",
+            title: "Warp",
+            description: "Desc",
+            time_to_claim: 5.0,
+            reward: DistractionRewardType::TimeWarp {
+                simulated_seconds: 90.0,
+            },
+        }));
+        let points_before = state.sloth_points;
+        assert!(state.claim_distraction().is_some());
+        let expected_warp = rate_before * 90.0;
+        assert!((state.sloth_points - (points_before + expected_warp)).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_offline_progress_o1_calculation() {
+        let mut state = GameState::new();
+        // Activity 0: 1.0 pt / 5.0s = 0.20 pts/sec
+        // Initial setup: timestamp at t=1000
+        assert!(state.process_offline_progress(1000).is_none());
+        assert_eq!(state.last_save_timestamp, 1000);
+
+        // Under 60 seconds (delta = 45s): ignored
+        let report_short = state.process_offline_progress(1045);
+        assert!(report_short.is_none());
+        assert_eq!(state.last_save_timestamp, 1045);
+        assert_eq!(state.sloth_points, 0.0);
+
+        // Delta = 3600s (1 hour away):
+        // Production rate = 0.20 pts/s
+        // Efficiency = 50% (0.50)
+        // Expected points = 0.20 * 3600 * 0.50 = 360.0 pts
+        let report = state.process_offline_progress(1045 + 3600);
+        assert!(report.is_some());
+        let rep = report.unwrap();
+        assert_eq!(rep.elapsed_seconds, 3600.0);
+        assert_eq!(rep.offline_efficiency, 0.50);
+        assert!((rep.points_earned - 360.0).abs() < EPSILON);
+        assert!((state.sloth_points - 360.0).abs() < EPSILON);
+        assert_eq!(state.active_view, ActiveView::WelcomeOfflineModal);
+
+        // Capping at max_offline_hours (12 hours = 43,200s):
+        // 24 hours away (86,400s) should cap effective seconds at 43,200s
+        let report_capped = state.process_offline_progress(state.last_save_timestamp + 86_400);
+        assert!(report_capped.is_some());
+        let rep_capped = report_capped.unwrap();
+        assert_eq!(rep_capped.elapsed_seconds, 86_400.0);
+        // Expected points: 0.20 * 43200 * 0.50 = 4320.0 pts
+        assert!((rep_capped.points_earned - 4320.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_serde_json_save_load_roundtrip() {
+        let mut state = GameState::new();
+        state.sloth_points = 543.21;
+        state.lifetime_sloth_points = 1234.56;
+        state.epiphanies = 3;
+        state.existential_stats.total_pen_clicks = 42;
+        state.activities[0].level = 5;
+        state.unlocked_achievements.insert("first_drop".to_string());
+        state.last_save_timestamp = 1700000000;
+
+        let json = serde_json::to_string(&state).expect("Serialization failed");
+        let loaded: GameState = serde_json::from_str(&json).expect("Deserialization failed");
+
+        assert!((loaded.sloth_points - 543.21).abs() < EPSILON);
+        assert!((loaded.lifetime_sloth_points - 1234.56).abs() < EPSILON);
+        assert_eq!(loaded.epiphanies, 3);
+        assert_eq!(loaded.existential_stats.total_pen_clicks, 42);
+        assert_eq!(loaded.activities[0].level, 5);
+        assert!(loaded.unlocked_achievements.contains("first_drop"));
+        assert_eq!(loaded.last_save_timestamp, 1700000000);
+    }
+
+    #[test]
+    fn test_pen_click_scaling_and_speedup() {
+        let mut state = GameState::new();
+        state.lifetime_sloth_points = 10_000.0;
+        // base = 0.25, factor = 0.0001 -> scaling = 1.0 + 10000 * 0.0001 = 2.0 -> earned = 0.25 * 2.0 = 0.50
+        assert_eq!(state.activities[0].progress, 0.0);
+        assert_eq!(state.activities[0].current_duration(), 5.0);
+
+        let (earned, sound) = state.pen_click();
+        assert!((earned - 0.50).abs() < EPSILON);
+        assert_eq!(state.existential_stats.total_pen_clicks, 1);
+        assert_eq!(sound, "*¡Tac!*");
+
+        // Nearest activity (activity 0) progressed by 2% of 5.0s = 0.10s
+        assert!((state.activities[0].progress - 0.10).abs() < EPSILON);
+
+        // Next click cycles onomatopoeia to "*¡Clic!*"
+        let (_, sound2) = state.pen_click();
+        assert_eq!(sound2, "*¡Clic!*");
+        assert_eq!(state.existential_stats.total_pen_clicks, 2);
+        assert!((state.activities[0].progress - 0.20).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_existential_stats_tracking() {
+        let mut state = GameState::new();
+        state.tick(12.5);
+        assert!((state.existential_stats.total_seconds_played - 12.5).abs() < EPSILON);
+
+        // 12.5s on activity 0 (duration 5.0s) completes 2 full cycles
+        assert_eq!(state.existential_stats.total_bars_completed, 2);
+
+        // Productive comparisons list
+        let comparisons = default_productive_comparisons();
+        assert_eq!(comparisons.len(), 6);
+        assert_eq!(comparisons[0].required_seconds, 60.0);
+        assert_eq!(comparisons[0].activity_name, "Tomar un vaso con agua");
+    }
+
+    #[test]
+    fn test_achievements_unlock_and_passive_multiplier() {
+        let mut state = GameState::new();
+        assert_eq!(state.achievements_multiplier(), 1.0);
+        assert!(state.unlocked_achievements.is_empty());
+
+        // Accumulate 10 sloth points -> unlocks "first_drop" (+1.5%)
+        state.sloth_points = 10.0;
+        state.lifetime_sloth_points = 10.0;
+        let unlocked = state.check_achievements();
+        assert!(unlocked.contains(&"first_drop"));
+        assert!(state.unlocked_achievements.contains("first_drop"));
+        assert!((state.achievements_multiplier() - 1.015).abs() < EPSILON);
+
+        // Perform 100 pen clicks -> unlocks "pen_maniac" (+1.5% -> 1.030)
+        state.existential_stats.total_pen_clicks = 100;
+        let unlocked2 = state.check_achievements();
+        assert!(unlocked2.contains(&"pen_maniac"));
+        assert!((state.achievements_multiplier() - 1.030).abs() < EPSILON);
+
+        // 3 activities in turbo mode simultaneously -> unlocks "all_turbo"
+        state.activities[0].level = 1000;
+        state.activities[1].level = 1000;
+        state.activities[2].level = 5000;
+        assert!(state.activities[0].is_turbo());
+        assert!(state.activities[1].is_turbo());
+        assert!(state.activities[2].is_turbo());
+        let unlocked3 = state.check_achievements();
+        assert!(unlocked3.contains(&"all_turbo"));
+        assert!(unlocked3.contains(&"stare_master"));
+        // 4 achievements unlocked (first_drop, pen_maniac, stare_master, all_turbo): 1.0 + 4 * 0.015 = 1.060
+        assert!((state.achievements_multiplier() - 1.060).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_active_view_navigation() {
+        let mut state = GameState::new();
+        assert_eq!(state.active_view, ActiveView::MainDashboard);
+
+        assert!(state.handle_action(Action::SetView(ActiveView::ExistentialStats)));
+        assert_eq!(state.active_view, ActiveView::ExistentialStats);
+
+        assert!(state.handle_action(Action::CloseView));
+        assert_eq!(state.active_view, ActiveView::MainDashboard);
+
+        assert!(state.handle_action(Action::SetView(ActiveView::AchievementsGallery)));
+        assert_eq!(state.active_view, ActiveView::AchievementsGallery);
+
+        assert!(state.handle_action(Action::PenClick));
+        assert_eq!(state.existential_stats.total_pen_clicks, 1);
     }
 }

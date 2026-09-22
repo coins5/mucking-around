@@ -2,7 +2,10 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use game_core::{ActivityState, GameState, Generator, PermanentUpgradeConfig, ResourceId};
+use game_core::{
+    AchievementConfig, ActivityState, DistractionRewardType, ExistentialStats, GameState,
+    Generator, OfflineProgressReport, PermanentUpgradeConfig, ProductiveComparison, ResourceId,
+};
 use thiserror::Error;
 
 /// Domain errors for text rendering operations.
@@ -227,22 +230,73 @@ pub fn format_activity_line(
 
 /// Renders the complete multi-bar text frame for the procrastination game.
 ///
-/// Header displays balance, Epiphanies, and production multiplier:
-/// `Puntos: XX.XX | Epifanías Zen: X (Bono: +XX%)`.
-/// Following lines display the formatted state of each activity in the roster,
-/// and a bottom section displays Crisis Existencial status and permanent upgrades menu shortcut.
+/// Header displays balance, Epiphanies, prestige bonus, achievements multiplier, and frenzy status if active.
+/// If an unexpected distraction is present, renders an inverse decay bar countdown and claim alert.
+/// Following lines display the formatted state of each activity in the roster.
+/// Footer displays prestige progress and keyboard shortcuts for all system views.
 #[must_use]
 pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -> String {
     let estimated_line_len = bar_width * 4 + 200;
-    let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 256);
+    let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 512);
 
-    let bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
+    let prestige_bonus_pct = ((state.prestige_multiplier() - 1.0) * 100.0).round() as u64;
+    let achieve_bonus_pct = ((state.achievements_multiplier() - 1.0) * 100.0 * 10.0).round() / 10.0;
     let _ = writeln!(
         frame,
-        "Puntos: {:.2} | Epifanías Zen: {} (Bono: +{}%)",
-        state.sloth_points, state.epiphanies, bonus_pct
+        "Puntos: {:.2} | Epifanías Zen: {} (+{}%) | Logros: +{:.1}%",
+        state.sloth_points, state.epiphanies, prestige_bonus_pct, achieve_bonus_pct
     );
+
+    if state.frenzy_timer > 0.0 {
+        let _ = writeln!(
+            frame,
+            "⚡ ¡FRENESÍ DE FLOJERA ACTIVO! x{:.1} ({:.1}s restantes)",
+            state.frenzy_multiplier, state.frenzy_timer
+        );
+    }
+
+    if let Some(ref sound) = state.last_pen_sound {
+        let _ = writeln!(frame, "🖊️ Lapicero: {sound}");
+    }
+
     let _ = writeln!(frame, "------------------------------------------------------------");
+
+    if let Some(ref distraction) = state.active_distraction {
+        let _ = writeln!(frame, "************************************************************");
+        let _ = writeln!(
+            frame,
+            "📱 ¡DISTRACCIÓN INESPERADA!: {}\n    \"{}\"",
+            distraction.config.title, distraction.config.description
+        );
+        let dist_bar = render_sub_block_bar(
+            distraction.time_remaining,
+            distraction.config.time_to_claim,
+            bar_width,
+        );
+        let effect_str = match &distraction.config.reward {
+            DistractionRewardType::Frenzy {
+                multiplier,
+                duration_secs,
+            } => format!("Frenesí x{multiplier:.1} por {duration_secs:.0}s"),
+            DistractionRewardType::InstantSloth {
+                percentage_of_current,
+                min_flat,
+            } => format!(
+                "+{:.0}% saldo (mín {:.0} pts)",
+                percentage_of_current * 100.0,
+                min_flat
+            ),
+            DistractionRewardType::TimeWarp { simulated_seconds } => {
+                format!("Salto temporal de {simulated_seconds:.0}s")
+            }
+        };
+        let _ = writeln!(
+            frame,
+            "    [{dist_bar}] {time:.1}s restantes | Recompensa: {effect_str}\n    >>> [ESPACIO / D] ¡Reclamar Distracción! <<<",
+            time = distraction.time_remaining
+        );
+        let _ = writeln!(frame, "************************************************************");
+    }
 
     for (index, activity) in state.activities.iter().enumerate() {
         let line = format_activity_line(activity, index, bar_width, frame_seed);
@@ -258,8 +312,123 @@ pub fn render_game_frame(state: &GameState, bar_width: usize, frame_seed: u64) -
     );
     let _ = writeln!(
         frame,
-        "[U] Menú de Iluminación (Mejoras Permanentes con Epifanías)"
+        "[ESPACIO] Lapicero / Reclamar | [1-5] Subir Nivel | [U] Mejoras | [S] Estadísticas | [A] Logros | [Q] Salir"
     );
+
+    frame
+}
+
+/// Renders the modal dialog for offline progress accumulated while away.
+#[must_use]
+pub fn render_offline_modal(report: &OfflineProgressReport) -> String {
+    let mut modal = String::with_capacity(768);
+    let total_secs = report.elapsed_seconds.max(0.0) as u64;
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+    let efficiency_pct = report.offline_efficiency * 100.0;
+
+    let _ = writeln!(modal, "==============================================================");
+    let _ = writeln!(modal, "                 ¡PROGRESO MIENTRAS DORMÍAS!");
+    let _ = writeln!(modal, "==============================================================");
+    let _ = writeln!(
+        modal,
+        " Estuviste ausente durante: {} horas, {} minutos y {} segundos.",
+        hours, minutes, seconds
+    );
+    let _ = writeln!(modal, " Eficiencia del descanso: {efficiency_pct:.1}%");
+    let _ = writeln!(modal);
+    let _ = writeln!(modal, " Tu nivel de desidia es tan alto que incluso desconectado");
+    let _ = writeln!(modal, " lograste acumular:");
+    let _ = writeln!(modal);
+    let _ = writeln!(modal, "                  +{:.2} Puntos de Flojera", report.points_earned);
+    let _ = writeln!(modal, "--------------------------------------------------------------");
+    let _ = writeln!(modal, "                   [Presiona cualquier tecla]");
+    let _ = writeln!(modal, "==============================================================");
+
+    modal
+}
+
+/// Renders the existential statistics screen and real-world productive comparisons.
+#[must_use]
+pub fn render_stats_frame(stats: &ExistentialStats, comparisons: &[ProductiveComparison]) -> String {
+    let mut frame = String::with_capacity(1024);
+    let total_secs = stats.total_seconds_played.max(0.0) as u64;
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    let _ = writeln!(frame, "================ ESTADÍSTICAS EXISTENCIALES ================");
+    let _ = writeln!(
+        frame,
+        "Tiempo total procrastinado: {}h {}m {}s",
+        hours, minutes, seconds
+    );
+    let _ = writeln!(frame, "Clics con el lapicero: {}", stats.total_pen_clicks);
+    let _ = writeln!(frame, "Barras de ocio completadas: {}", stats.total_bars_completed);
+    let _ = writeln!(frame, "Distracciones aprovechadas: {}", stats.total_distractions_claimed);
+    let _ = writeln!(frame, "Crisis existenciales (Prestigios): {}", stats.total_prestiges);
+    let _ = writeln!(frame, "Puntos de Flojera históricos acumulados: {:.2}", stats.total_sloth_points_earned);
+    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(frame, "¿QUÉ COSAS REALES PODRÍAS HABER HECHO EN SU LUGAR?");
+    let _ = writeln!(frame, "------------------------------------------------------------");
+
+    for comp in comparisons {
+        let times = if comp.required_seconds > 0.0 {
+            (stats.total_seconds_played / comp.required_seconds).floor() as u64
+        } else {
+            0
+        };
+        let _ = writeln!(
+            frame,
+            "• [{} veces] {}",
+            times, comp.activity_name
+        );
+        let _ = writeln!(frame, "    \"{}\"", comp.humor_lore);
+    }
+
+    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(frame, "[S / Esc] Volver al tablero principal");
+
+    frame
+}
+
+/// Renders the achievements gallery screen with unlock statuses and passive multipliers.
+#[must_use]
+pub fn render_achievements_frame(state: &GameState, achievements: &[AchievementConfig]) -> String {
+    let mut frame = String::with_capacity(1024);
+    let unlocked_count = achievements
+        .iter()
+        .filter(|a| state.unlocked_achievements.contains(a.id))
+        .count();
+    let total_bonus_pct = ((state.achievements_multiplier() - 1.0) * 100.0 * 10.0).round() / 10.0;
+
+    let _ = writeln!(frame, "=================== GALERÍA DE LOGROS ===================");
+    let _ = writeln!(
+        frame,
+        "Logros desbloqueados: {} / {} | Bono pasivo total: +{:.1}%",
+        unlocked_count,
+        achievements.len(),
+        total_bonus_pct
+    );
+    let _ = writeln!(frame, "------------------------------------------------------------");
+
+    for ach in achievements {
+        let is_unlocked = state.unlocked_achievements.contains(ach.id);
+        let bonus_pct = (ach.bonus_multiplier * 100.0 * 10.0).round() / 10.0;
+        let tag = if is_unlocked {
+            format!("[DESBLOQUEADO (+{bonus_pct:.1}%)]")
+        } else {
+            "[BLOQUEADO]".to_string()
+        };
+
+        let _ = writeln!(frame, "{} {}", tag, ach.name);
+        let _ = writeln!(frame, "    Condición: {}", ach.description);
+        let _ = writeln!(frame, "    \"{}\"", ach.lore);
+    }
+
+    let _ = writeln!(frame, "------------------------------------------------------------");
+    let _ = writeln!(frame, "[A / Esc] Volver al tablero principal");
 
     frame
 }
@@ -573,7 +742,7 @@ mod tests {
         state.activities[0].progress = 2.5;
 
         let frame = render_game_frame(&state, 10, 0);
-        assert!(frame.contains("Puntos: 12.50 | Epifanías Zen: 0 (Bono: +0%)"));
+        assert!(frame.contains("Puntos: 12.50 | Epifanías Zen: 0 (+0%) | Logros: +0.0%"));
         assert!(frame.contains("[1] Esperar a que cargue la barrita [Lvl. 1 / Hito: 25]"));
         assert!(frame.contains("\"La vida se mide en barras de carga que sospechosamente se quedan en 99%.\""));
         assert!(frame.contains("[█████     ] 50% Faltan 2.50s | +1.00 pts"));
@@ -586,7 +755,81 @@ mod tests {
         assert!(frame.contains("[5] [BLOQUEADO] Ordenar el escritorio para no trabajar -> Desbloquear: Cuesta 350.00 pts [Presiona 5]"));
         assert!(frame.contains("\"Increíble cómo organizar cables se vuelve prioridad cuando hay pendientes.\""));
         assert!(frame.contains("[P] CRISIS EXISTENCIAL -> Reclamar +0 Epifanías (Histórico: 0.00 pts)"));
-        assert!(frame.contains("[U] Menú de Iluminación (Mejoras Permanentes con Epifanías)"));
+        assert!(frame.contains("[ESPACIO] Lapicero / Reclamar | [1-5] Subir Nivel | [U] Mejoras | [S] Estadísticas | [A] Logros | [Q] Salir"));
+    }
+
+    #[test]
+    fn test_render_game_frame_with_distraction_and_frenzy() {
+        let mut state = GameState::new();
+        state.frenzy_multiplier = 7.0;
+        state.frenzy_timer = 18.5;
+        state.last_pen_sound = Some("*¡Crack!*".to_string());
+        state.active_distraction = Some(game_core::ActiveDistractionState::new(
+            game_core::default_distractions()[0].clone(),
+        ));
+
+        let frame = render_game_frame(&state, 20, 0);
+        assert!(frame.contains("⚡ ¡FRENESÍ DE FLOJERA ACTIVO! x7.0 (18.5s restantes)"));
+        assert!(frame.contains("🖊️ Lapicero: *¡Crack!*"));
+        assert!(frame.contains("📱 ¡DISTRACCIÓN INESPERADA!: Video de Restauración"));
+        assert!(frame.contains("Frenesí x7.0 por 25s"));
+        assert!(frame.contains(">>> [ESPACIO / D] ¡Reclamar Distracción! <<<"));
+    }
+
+    #[test]
+    fn test_render_offline_modal() {
+        let report = OfflineProgressReport {
+            elapsed_seconds: 26530.0, // 7h 22m 10s
+            offline_efficiency: 0.50,
+            points_earned: 84320.50,
+        };
+        let modal = render_offline_modal(&report);
+
+        assert!(modal.contains("¡PROGRESO MIENTRAS DORMÍAS!"));
+        assert!(modal.contains("Estuviste ausente durante: 7 horas, 22 minutos y 10 segundos."));
+        assert!(modal.contains("Eficiencia del descanso: 50.0%"));
+        assert!(modal.contains("+84320.50 Puntos de Flojera"));
+        assert!(modal.contains("[Presiona cualquier tecla]"));
+    }
+
+    #[test]
+    fn test_render_stats_frame() {
+        let mut stats = ExistentialStats::default();
+        stats.total_seconds_played = 7325.0; // 2h 2m 5s
+        stats.total_pen_clicks = 150;
+        stats.total_bars_completed = 45;
+        stats.total_distractions_claimed = 8;
+        stats.total_prestiges = 2;
+        stats.total_sloth_points_earned = 12500.0;
+
+        let comparisons = game_core::default_productive_comparisons();
+        let frame = render_stats_frame(&stats, &comparisons);
+
+        assert!(frame.contains("================ ESTADÍSTICAS EXISTENCIALES ================"));
+        assert!(frame.contains("Tiempo total procrastinado: 2h 2m 5s"));
+        assert!(frame.contains("Clics con el lapicero: 150"));
+        assert!(frame.contains("Barras de ocio completadas: 45"));
+        assert!(frame.contains("Distracciones aprovechadas: 8"));
+        assert!(frame.contains("Crisis existenciales (Prestigios): 2"));
+        assert!(frame.contains("Puntos de Flojera históricos acumulados: 12500.00"));
+        assert!(frame.contains("• [122 veces] Tomar un vaso con agua"));
+        assert!(frame.contains("\"Estar hidratado ayuda a pensar con claridad... mejor no.\""));
+        assert!(frame.contains("[S / Esc] Volver al tablero principal"));
+    }
+
+    #[test]
+    fn test_render_achievements_frame() {
+        let mut state = GameState::new();
+        state.unlocked_achievements.insert("first_drop".to_string());
+        let achievements = game_core::default_achievements();
+
+        let frame = render_achievements_frame(&state, &achievements);
+        assert!(frame.contains("=================== GALERÍA DE LOGROS ==================="));
+        assert!(frame.contains("Logros desbloqueados: 1 / 6"));
+        assert!(frame.contains("[DESBLOQUEADO (+1.5%)] El Comienzo del Fin"));
+        assert!(frame.contains("\"Cualquier viaje de mil millas empieza sin levantarse del sillón.\""));
+        assert!(frame.contains("[BLOQUEADO] Síndrome del Resorte"));
+        assert!(frame.contains("[A / Esc] Volver al tablero principal"));
     }
 
     #[test]

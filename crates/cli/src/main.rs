@@ -1,15 +1,15 @@
 #![forbid(unsafe_code)]
 
-use std::io::{IsTerminal, stdout, Write};
-use std::time::{Duration, Instant};
+use std::io::{stdout, IsTerminal, Write};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use core::GameState;
+use core::{ActiveView, GameState};
 use crossterm::{
     cursor::{self, Hide, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
 const TARGET_FPS: u64 = 60;
@@ -39,15 +39,52 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Retrieves the current system Unix timestamp in seconds.
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Saves the game state to disk using `serde_json`.
+fn save_game(game: &mut GameState) -> Result<()> {
+    game.last_save_timestamp = current_unix_timestamp();
+    let data = serde_json::to_string_pretty(game)?;
+    std::fs::write(game.persistence_config.save_file_name, data)?;
+    Ok(())
+}
+
+/// Loads the game state from disk if available, otherwise initializes a new state.
+fn load_or_init_game() -> GameState {
+    let default_file = "save.json";
+    let loaded = std::fs::read_to_string(default_file)
+        .ok()
+        .and_then(|content| serde_json::from_str::<GameState>(&content).ok());
+
+    if let Some(mut game) = loaded {
+        let now = current_unix_timestamp();
+        game.process_offline_progress(now);
+        game
+    } else {
+        let mut new_game = GameState::new();
+        new_game.last_save_timestamp = current_unix_timestamp();
+        new_game
+    }
+}
+
 fn main() -> Result<()> {
     let is_tty = std::io::stdin().is_terminal();
     let _guard = TerminalGuard::enter();
 
-    let mut game = GameState::new();
+    let mut game = load_or_init_game();
     let permanent_upgrades = core::default_permanent_upgrades();
+    let productive_comparisons = core::default_productive_comparisons();
+    let achievements = core::default_achievements();
 
     let frame_duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS);
     let mut last_tick = Instant::now();
+    let mut last_save = Instant::now();
     let mut frame_count = 0u64;
 
     loop {
@@ -56,6 +93,12 @@ fn main() -> Result<()> {
         last_tick = now;
 
         game.tick(dt);
+
+        // Background auto-save check
+        if last_save.elapsed().as_secs_f64() >= game.persistence_config.auto_save_interval {
+            let _ = save_game(&mut game);
+            last_save = Instant::now();
+        }
 
         // Process non-blocking keyboard input
         if is_tty {
@@ -70,12 +113,18 @@ fn main() -> Result<()> {
                     let is_ctrl_c = key_event.code == KeyCode::Char('c')
                         && key_event.modifiers.contains(KeyModifiers::CONTROL);
                     if is_ctrl_c {
+                        let _ = save_game(&mut game);
                         print_exit_summary(&game)?;
                         return Ok(());
                     }
 
-                    if game.in_prestige_dialog {
-                        match key_event.code {
+                    match game.active_view {
+                        ActiveView::WelcomeOfflineModal => {
+                            // Any key dismisses welcome modal and returns to main dashboard
+                            game.set_view(ActiveView::MainDashboard);
+                            execute!(stdout(), Clear(ClearType::All))?;
+                        }
+                        ActiveView::PrestigeDialog => match key_event.code {
                             KeyCode::Char('s' | 'S') => {
                                 let _ = game.confirm_prestige();
                                 execute!(stdout(), Clear(ClearType::All))?;
@@ -85,23 +134,50 @@ fn main() -> Result<()> {
                                 execute!(stdout(), Clear(ClearType::All))?;
                             }
                             _ => {}
-                        }
-                    } else if game.in_upgrade_menu {
-                        match key_event.code {
-                            KeyCode::Char('u' | 'U') | KeyCode::Esc | KeyCode::Char('q' | 'Q') => {
-                                game.close_upgrade_menu();
-                                execute!(stdout(), Clear(ClearType::All))?;
-                            }
+                        },
+                        ActiveView::PermanentUpgradesShop => match key_event.code {
                             KeyCode::Char(ch @ '1'..='5') => {
                                 let index = (ch as usize) - ('1' as usize);
                                 if let Some(upgrade) = permanent_upgrades.get(index) {
                                     let _ = game.buy_permanent_upgrade(upgrade.id);
                                 }
                             }
+                            KeyCode::Char('u' | 'U') | KeyCode::Esc | KeyCode::Char('q' | 'Q') => {
+                                game.set_view(ActiveView::MainDashboard);
+                                execute!(stdout(), Clear(ClearType::All))?;
+                            }
                             _ => {}
-                        }
-                    } else {
-                        match key_event.code {
+                        },
+                        ActiveView::ExistentialStats => match key_event.code {
+                            KeyCode::Char('s' | 'S') | KeyCode::Esc | KeyCode::Char('q' | 'Q') => {
+                                game.set_view(ActiveView::MainDashboard);
+                                execute!(stdout(), Clear(ClearType::All))?;
+                            }
+                            _ => {}
+                        },
+                        ActiveView::AchievementsGallery => match key_event.code {
+                            KeyCode::Char('a' | 'A') | KeyCode::Esc | KeyCode::Char('q' | 'Q') => {
+                                game.set_view(ActiveView::MainDashboard);
+                                execute!(stdout(), Clear(ClearType::All))?;
+                            }
+                            _ => {}
+                        },
+                        ActiveView::MainDashboard => match key_event.code {
+                            KeyCode::Char(' ') => {
+                                // Claim distraction if active, otherwise click pen
+                                if game.active_distraction.is_some() {
+                                    let _ = game.claim_distraction();
+                                } else {
+                                    let _ = game.pen_click();
+                                }
+                            }
+                            KeyCode::Char('d' | 'D') => {
+                                let _ = game.claim_distraction();
+                            }
+                            KeyCode::Char(ch @ '1'..='5') => {
+                                let index = (ch as usize) - ('1' as usize);
+                                let _ = game.upgrade_activity(index);
+                            }
                             KeyCode::Char('p' | 'P') => {
                                 game.open_prestige_dialog();
                                 execute!(stdout(), Clear(ClearType::All))?;
@@ -110,29 +186,48 @@ fn main() -> Result<()> {
                                 game.open_upgrade_menu();
                                 execute!(stdout(), Clear(ClearType::All))?;
                             }
-                            KeyCode::Char(ch @ '1'..='5') => {
-                                let index = (ch as usize) - ('1' as usize);
-                                let _ = game.upgrade_activity(index);
+                            KeyCode::Char('s' | 'S') => {
+                                game.set_view(ActiveView::ExistentialStats);
+                                execute!(stdout(), Clear(ClearType::All))?;
+                            }
+                            KeyCode::Char('a' | 'A') => {
+                                game.set_view(ActiveView::AchievementsGallery);
+                                execute!(stdout(), Clear(ClearType::All))?;
                             }
                             KeyCode::Char('q' | 'Q') | KeyCode::Esc => {
+                                let _ = save_game(&mut game);
                                 print_exit_summary(&game)?;
                                 return Ok(());
                             }
                             _ => {}
-                        }
+                        },
                     }
                 }
             }
         }
 
-        // Render current frame
-        let frame = if game.in_prestige_dialog {
-            ui_text::render_prestige_dialog(&game)
-        } else if game.in_upgrade_menu {
-            ui_text::render_upgrades_frame(&game, &permanent_upgrades)
-        } else {
-            ui_text::render_game_frame(&game, BAR_WIDTH, frame_count)
+        // Render frame based on active view state machine
+        let frame = match game.active_view {
+            ActiveView::WelcomeOfflineModal => {
+                if let Some(ref report) = game.offline_report {
+                    ui_text::render_offline_modal(report)
+                } else {
+                    ui_text::render_game_frame(&game, BAR_WIDTH, frame_count)
+                }
+            }
+            ActiveView::PrestigeDialog => ui_text::render_prestige_dialog(&game),
+            ActiveView::PermanentUpgradesShop => {
+                ui_text::render_upgrades_frame(&game, &permanent_upgrades)
+            }
+            ActiveView::ExistentialStats => {
+                ui_text::render_stats_frame(&game.existential_stats, &productive_comparisons)
+            }
+            ActiveView::AchievementsGallery => {
+                ui_text::render_achievements_frame(&game, &achievements)
+            }
+            ActiveView::MainDashboard => ui_text::render_game_frame(&game, BAR_WIDTH, frame_count),
         };
+
         frame_count = frame_count.wrapping_add(1);
         execute!(stdout(), cursor::MoveTo(0, 0))?;
         for line in frame.lines() {
@@ -141,12 +236,19 @@ fn main() -> Result<()> {
         }
         execute!(stdout(), terminal::Clear(ClearType::CurrentLine))?;
 
-        let controls = if game.in_prestige_dialog {
-            "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r"
-        } else if game.in_upgrade_menu {
-            "\r\nControles: [1-5] Comprar Mejora | [U / Esc / q] Volver al juego\r"
-        } else {
-            "\r\nControles: [1-5] Mejorar | [P] Crisis Existencial | [U] Mejoras Permanentes | [q / Esc] Salir\r"
+        let controls = match game.active_view {
+            ActiveView::WelcomeOfflineModal => {
+                "\r\nControles: [Cualquier tecla / Esc / Espacio] Continuar al juego\r"
+            }
+            ActiveView::PrestigeDialog => "\r\nControles: [S] Confirmar | [N / Esc] Cancelar\r",
+            ActiveView::PermanentUpgradesShop => {
+                "\r\nControles: [1-5] Comprar Mejora | [U / Esc / q] Volver al juego\r"
+            }
+            ActiveView::ExistentialStats => "\r\nControles: [S / Esc / q] Volver al juego\r",
+            ActiveView::AchievementsGallery => "\r\nControles: [A / Esc / q] Volver al juego\r",
+            ActiveView::MainDashboard => {
+                "\r\nControles: [Espacio] Lapicero / Reclamar | [1-5] Mejorar | [P] Crisis | [U] Mejoras | [S] Estadísticas | [A] Logros | [q / Esc] Salir\r"
+            }
         };
         println!("{controls}");
         stdout().flush()?;
@@ -162,13 +264,14 @@ fn main() -> Result<()> {
         }
     }
 
+    let _ = save_game(&mut game);
     print_exit_summary(&game)?;
     Ok(())
 }
 
 fn print_exit_summary(game: &GameState) -> Result<()> {
     println!(
-        "\r\nSimulación finalizada. Puntos: {:.2} | Epifanías Zen: {} (Histórico: {:.2} pts)\r",
+        "\r\nSimulación guardada y finalizada. Puntos: {:.2} | Epifanías Zen: {} (Histórico: {:.2} pts)\r",
         game.sloth_points, game.epiphanies, game.lifetime_sloth_points
     );
     Ok(())
