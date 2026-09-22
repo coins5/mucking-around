@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, dev ]
+  pull_request:
+    branches: [ master, dev ]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify code formatting (rustfmt)
+        run: cargo fmt --all -- --check
+
+      - name: Verify workspace compilation
+        run: cargo check --workspace
+
+      - name: Lint with Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run unit test suite
+        run: cargo test --workspace
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
+
+      - name: Build WebAssembly package
+        run: wasm-pack build crates/web --target web --out-dir ../../www/pkg

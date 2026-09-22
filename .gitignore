@@ -1,1 +1,16 @@
+# Rust build artifacts
 /target
+
+# Local game save
+save.json
+
+# WebAssembly build outputs
+/www/pkg/
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

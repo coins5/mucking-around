@@ -1,6 +1,16 @@
-[package]
-name = "mucking-around"
+[workspace]
+members = [
+    "crates/core",
+    "crates/ui_text",
+    "crates/cli",
+    "crates/web",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
+authors = ["coins5"]
+description = "Juego incremental / idle zen en Rust con estetica ASCII y Unicode"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/coins5/mucking-around"

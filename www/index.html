@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Mucking Around — Procrastinación Zen</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%20y=%220%22%20width=%22100%22%20height=%22100%22><text y=%22.9em%22 font-size=%2290%22>🦥</text></svg>">
+</head>
+<body>
+  <div class="app-container">
+    <header class="top-nav">
+      <div class="logo">
+        <span class="logo-icon">🦥</span>
+        <span class="logo-title">Mucking Around</span>
+        <span class="badge">WebAssembly</span>
+      </div>
+      <div class="nav-actions">
+        <span id="save-status" class="save-status">💾 Guardado</span>
+        <button id="btn-export" class="tool-btn" title="Descargar partida guardada en formato JSON">📥 Exportar</button>
+        <button id="btn-import" class="tool-btn" title="Cargar archivo save.json">📤 Importar</button>
+        <button id="btn-reset" class="tool-btn danger" title="Borrar partida y empezar de nuevo">⚠️ Reiniciar</button>
+      </div>
+    </header>
+
+    <main class="terminal-outer">
+      <div class="terminal-bezel">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+          </div>
+          <div class="terminal-title">zen_terminal@mucking-around:~</div>
+          <div class="fps-counter" id="fps-display">60 FPS</div>
+        </div>
+        <div class="terminal-screen" id="terminal-screen-container">
+          <pre id="screen" tabindex="0" autofocus>Cargando simulación WebAssembly...</pre>
+        </div>
+        <div id="controls-hint" class="controls-hint"></div>
+      </div>
+    </main>
+
+    <!-- Barra de Controles Contextuales y Táctiles con Niebla de Guerra -->
+    <section class="mobile-controls" id="touch-controls">
+      <!-- Controles del Dashboard Principal -->
+      <div id="dashboard-controls">
+        <div class="controls-row primary-row">
+          <button id="btn-space" class="touch-btn primary" title="Espacio: Clic al lapicero o reclamar distracción">
+            <span class="btn-shortcut">[Espacio]</span>
+            <span class="btn-label" id="space-label">Lapicero / Reclamar</span>
+          </button>
+        </div>
+
+        <div class="controls-row activities-row" id="activities-row">
+          <span class="row-label">Mejorar:</span>
+          <button id="btn-act-1" class="touch-btn key-btn" data-key="1">[1]</button>
+          <button id="btn-act-2" class="touch-btn key-btn" data-key="2">[2]</button>
+          <button id="btn-act-3" class="touch-btn key-btn" data-key="3">[3]</button>
+          <button id="btn-act-4" class="touch-btn key-btn" data-key="4">[4]</button>
+          <button id="btn-act-5" class="touch-btn key-btn" data-key="5">[5]</button>
+        </div>
+
+        <div class="controls-row nav-row" id="dashboard-nav-row">
+          <button id="btn-prestige" class="touch-btn nav-btn" data-key="p">⚡ [P] Crisis</button>
+          <button id="btn-upgrades" class="touch-btn nav-btn" data-key="u">✨ [U] Mejoras</button>
+          <button id="btn-stats" class="touch-btn nav-btn" data-key="s">📊 [S] Stats</button>
+          <button id="btn-achievements" class="touch-btn nav-btn" data-key="a">🏆 [A] Logros</button>
+        </div>
+      </div>
+
+      <!-- Controles para Crisis Existencial (Prestigio) -->
+      <div id="prestige-controls" class="context-panel" style="display: none;">
+        <div class="controls-row">
+          <button id="btn-confirm-prestige" class="touch-btn primary danger-btn">⚡ [S] Confirmar Crisis Existencial</button>
+          <button id="btn-cancel-prestige" class="touch-btn back-btn">❌ [N / Esc] Cancelar</button>
+        </div>
+      </div>
+
+      <!-- Controles para Tienda de Mejoras Permanentes -->
+      <div id="shop-controls" class="context-panel" style="display: none;">
+        <div class="controls-row upgrades-row" id="upgrades-row">
+          <span class="row-label">Comprar:</span>
+          <button id="btn-upg-1" class="touch-btn key-btn" data-key="1">[1]</button>
+          <button id="btn-upg-2" class="touch-btn key-btn" data-key="2">[2]</button>
+          <button id="btn-upg-3" class="touch-btn key-btn" data-key="3">[3]</button>
+          <button id="btn-upg-4" class="touch-btn key-btn" data-key="4">[4]</button>
+          <button id="btn-upg-5" class="touch-btn key-btn" data-key="5">[5]</button>
+        </div>
+        <div class="controls-row" style="margin-top: 6px;">
+          <button id="btn-shop-back" class="touch-btn back-btn">↩️ [U / Esc] Volver al juego</button>
+        </div>
+      </div>
+
+      <!-- Controles para Vistas Modales (Stats / Logros / Offline) -->
+      <div id="modal-controls" class="context-panel" style="display: none;">
+        <div class="controls-row">
+          <button id="btn-modal-back" class="touch-btn back-btn">↩️ [Cualquier tecla / Esc] Volver al juego</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <input type="file" id="file-input" accept=".json" style="display: none;" />
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
