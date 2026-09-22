@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+pub mod roster;
+
 use serde::{Deserialize, Serialize};
+
+pub use roster::{default_roster, ActivityConfig};
 
 /// Extensible identifier for in-game resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -28,7 +31,7 @@ impl std::fmt::Display for CoreError {
 
 impl std::error::Error for CoreError {}
 
-/// Component representing an idle progress generator.
+/// Component representing an idle progress generator (legacy single generator support).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Generator {
     /// Total duration in seconds needed to complete a cycle.
@@ -53,17 +56,11 @@ impl Default for Generator {
 }
 
 impl Generator {
-    /// Creates a new `Generator` with default settings (5.0s cycle, 0.7 Primary resource).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Advances the generator by `dt` seconds deterministically.
-    /// Returns the number of completed cycles.
-    ///
-    /// Preserves remainder progress when cycles complete.
-    /// Clamps progress between `0.0` and `target_duration` to prevent numerical drift or visual overflow.
     pub fn tick(&mut self, dt: f64) -> u64 {
         if !dt.is_finite() || dt <= 0.0 || !self.target_duration.is_finite() || self.target_duration <= 0.0 {
             return 0;
@@ -73,7 +70,6 @@ impl Generator {
 
         let mut completed = 0u64;
 
-        // Optimization for very large delta times (e.g., long offline progression)
         if self.progress >= self.target_duration * 100.0 {
             let fast_cycles = (self.progress / self.target_duration).floor() as u64;
             completed += fast_cycles;
@@ -85,13 +81,11 @@ impl Generator {
             self.progress -= self.target_duration;
         }
 
-        // Guard against negative precision drift and visual overflow
         self.progress = self.progress.clamp(0.0, self.target_duration);
 
         completed
     }
 
-    /// Returns the progress ratio of the current cycle clamped between `0.0` and `1.0`.
     #[must_use]
     pub fn progress_ratio(&self) -> f64 {
         if !self.target_duration.is_finite() || self.target_duration <= 0.0 {
@@ -101,83 +95,144 @@ impl Generator {
     }
 }
 
-/// The game state managing the idle generator and resource balances.
+/// Runtime dynamic state for an activity instance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivityState {
+    /// Static configuration for this activity.
+    pub config: ActivityConfig,
+    /// Current accumulated time in seconds towards cycle completion.
+    pub progress: f64,
+    /// Whether this activity is unlocked and producing rewards.
+    pub unlocked: bool,
+}
+
+impl ActivityState {
+    /// Creates a new `ActivityState` based on its configuration.
+    /// An activity is unlocked by default if its cost is 0.0.
+    #[must_use]
+    pub fn new(config: ActivityConfig) -> Self {
+        let unlocked = config.cost <= 0.0;
+        Self {
+            config,
+            progress: 0.0,
+            unlocked,
+        }
+    }
+
+    /// Returns the progress ratio clamped between `0.0` and `1.0`.
+    #[must_use]
+    pub fn progress_ratio(&self) -> f64 {
+        if !self.config.duration.is_finite() || self.config.duration <= 0.0 {
+            0.0
+        } else {
+            (self.progress / self.config.duration).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Returns the remaining time in seconds to complete the current cycle.
+    #[must_use]
+    pub fn remaining_time(&self) -> f64 {
+        if !self.config.duration.is_finite() || self.config.duration <= 0.0 {
+            0.0
+        } else {
+            (self.config.duration - self.progress).clamp(0.0, self.config.duration)
+        }
+    }
+}
+
+/// Explicit action intent to drive deterministic state mutations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Action {
+    /// Attempt to unlock an activity at the given roster index.
+    UnlockActivity(usize),
+}
+
+/// The game state managing procrastination activities and Sloth Points.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameState {
-    /// The primary generator instance.
-    pub generator: Generator,
-    /// Extensible resource storage indexed by `ResourceId`.
-    pub resources: HashMap<ResourceId, f64>,
+    /// Current balance of Sloth Points ("Puntos de Flojera").
+    pub sloth_points: f64,
+    /// Dynamic state of all activities in the roster.
+    pub activities: Vec<ActivityState>,
 }
 
 impl Default for GameState {
     fn default() -> Self {
-        let mut resources = HashMap::new();
-        resources.insert(ResourceId::Primary, 0.0);
-        Self {
-            generator: Generator::default(),
-            resources,
-        }
+        Self::new()
     }
 }
 
 impl GameState {
-    /// Creates a new `GameState` with default initial values.
+    /// Initializes a new game state with the default roster.
+    /// The first activity is unlocked by default.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Retrieves the current balance of a resource.
-    /// Returns `0.0` if the resource is not initialized.
-    #[must_use]
-    pub fn get_resource(&self, id: ResourceId) -> f64 {
-        self.resources
-            .get(&id)
-            .copied()
-            .unwrap_or(0.0)
-            .clamp(0.0, f64::MAX)
-    }
-
-    /// Sets the balance of a resource directly.
-    /// Safely ignores negative, NaN, or non-finite values.
-    pub fn set_resource(&mut self, id: ResourceId, amount: f64) {
-        if amount.is_finite() && amount >= 0.0 {
-            self.resources.insert(id, amount);
+        let activities = default_roster().into_iter().map(ActivityState::new).collect();
+        Self {
+            sloth_points: 0.0,
+            activities,
         }
     }
 
-    /// Safely adds `amount` to the resource balance.
-    /// Ignores non-positive, NaN, or infinite amounts.
-    pub fn add_resource(&mut self, id: ResourceId, amount: f64) {
-        if !amount.is_finite() || amount <= 0.0 {
-            return;
+    /// Attempts to unlock the activity at `index`.
+    ///
+    /// Returns `true` if the activity exists, was locked, and the player had enough
+    /// Sloth Points to pay its cost. Returns `false` otherwise.
+    pub fn unlock_activity(&mut self, index: usize) -> bool {
+        if let Some(activity) = self.activities.get_mut(index)
+            && !activity.unlocked
+            && self.sloth_points >= activity.config.cost
+        {
+            self.sloth_points -= activity.config.cost;
+            activity.unlocked = true;
+            return true;
         }
-        let current = self.get_resource(id);
-        let updated = (current + amount).clamp(0.0, f64::MAX);
-        self.resources.insert(id, updated);
+        false
+    }
+
+    /// Handles an explicit player action intent.
+    pub fn handle_action(&mut self, action: Action) -> bool {
+        match action {
+            Action::UnlockActivity(index) => self.unlock_activity(index),
+        }
     }
 
     /// Advances the simulation by `dt` seconds deterministically.
     ///
-    /// If `dt` is non-positive or non-finite, the call is safely ignored.
-    /// Cycles completed by the generator add `output_amount` to `output_resource`.
+    /// Only unlocked activities advance their progress.
+    /// When an activity completes (`progress >= duration`), its reward is added to
+    /// `sloth_points` and any remainder is preserved (`progress -= duration`).
     pub fn tick(&mut self, dt: f64) {
         if !dt.is_finite() || dt <= 0.0 {
             return;
         }
 
-        let completed = self.generator.tick(dt);
-        if completed > 0 {
-            let reward = self.generator.output_amount * (completed as f64);
-            self.add_resource(self.generator.output_resource, reward);
-        }
-    }
+        for activity in &mut self.activities {
+            if !activity.unlocked {
+                continue;
+            }
 
-    /// Returns the progress ratio of the active generator cycle clamped between `0.0` and `1.0`.
-    #[must_use]
-    pub fn progress_ratio(&self) -> f64 {
-        self.generator.progress_ratio()
+            if !activity.config.duration.is_finite() || activity.config.duration <= 0.0 {
+                continue;
+            }
+
+            activity.progress += dt;
+
+            // Fast-forward cycle calculations for very large delta times (e.g. offline progression)
+            if activity.progress >= activity.config.duration * 100.0 {
+                let fast_cycles = (activity.progress / activity.config.duration).floor();
+                self.sloth_points += fast_cycles * activity.config.reward;
+                activity.progress -= fast_cycles * activity.config.duration;
+            }
+
+            while activity.progress >= activity.config.duration {
+                self.sloth_points += activity.config.reward;
+                activity.progress -= activity.config.duration;
+            }
+
+            // Ensure progress is clamped to prevent negative precision drift or overflow
+            activity.progress = activity.progress.clamp(0.0, activity.config.duration);
+        }
     }
 }
 
@@ -188,150 +243,148 @@ mod tests {
     const EPSILON: f64 = 1e-9;
 
     #[test]
-    fn test_default_initial_values() {
+    fn test_initial_game_state() {
         let state = GameState::new();
-        assert!((state.generator.progress - 0.0).abs() < EPSILON);
-        assert!((state.generator.target_duration - 5.0).abs() < EPSILON);
-        assert_eq!(state.generator.output_resource, ResourceId::Primary);
-        assert!((state.generator.output_amount - 0.7).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.0).abs() < EPSILON);
-        assert!((state.progress_ratio() - 0.0).abs() < EPSILON);
+        assert!((state.sloth_points - 0.0).abs() < EPSILON);
+        assert_eq!(state.activities.len(), 5);
+
+        // First activity must be unlocked by default
+        assert!(state.activities[0].unlocked);
+        assert!((state.activities[0].progress - 0.0).abs() < EPSILON);
+        assert_eq!(state.activities[0].config.id, "wait_bar");
+
+        // Remaining activities must be locked
+        for (i, activity) in state.activities.iter().enumerate().skip(1) {
+            assert!(!activity.unlocked, "Activity at index {i} should be locked initially");
+            assert!((activity.progress - 0.0).abs() < EPSILON);
+        }
     }
 
     #[test]
-    fn test_tick_sub_threshold() {
+    fn test_only_first_activity_progresses_initially() {
+        let mut state = GameState::new();
+        state.tick(2.0);
+
+        assert!((state.activities[0].progress - 2.0).abs() < EPSILON);
+        assert!((state.activities[0].progress_ratio() - (2.0 / 5.0)).abs() < EPSILON);
+        assert!((state.activities[0].remaining_time() - 3.0).abs() < EPSILON);
+        assert!((state.sloth_points - 0.0).abs() < EPSILON);
+
+        // Locked activities must not have progressed
+        for activity in state.activities.iter().skip(1) {
+            assert_eq!(activity.progress, 0.0);
+        }
+    }
+
+    #[test]
+    fn test_cannot_unlock_without_sufficient_points() {
+        let mut state = GameState::new();
+        // Activity 1 requires 5.0 points, state starts with 0.0
+        let unlocked = state.unlock_activity(1);
+        assert!(!unlocked);
+        assert!(!state.activities[1].unlocked);
+        assert_eq!(state.sloth_points, 0.0);
+
+        // Even with partial points
+        state.sloth_points = 4.9;
+        let unlocked = state.unlock_activity(1);
+        assert!(!unlocked);
+        assert!(!state.activities[1].unlocked);
+        assert!((state.sloth_points - 4.9).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_cannot_unlock_invalid_indices_or_already_unlocked() {
+        let mut state = GameState::new();
+        state.sloth_points = 1000.0;
+
+        // Index out of bounds
+        assert!(!state.unlock_activity(99));
+
+        // Already unlocked activity (index 0)
+        assert!(!state.unlock_activity(0));
+        assert_eq!(state.sloth_points, 1000.0);
+    }
+
+    #[test]
+    fn test_successful_purchase_and_subsequent_tick() {
         let mut state = GameState::new();
 
-        state.tick(1.0);
-        assert!((state.generator.progress - 1.0).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.0).abs() < EPSILON);
-        assert!((state.progress_ratio() - 0.2).abs() < EPSILON);
+        // Accumulate 5.0 points by running 5 full cycles of activity 0 (5 * 5.0s = 25.0s)
+        state.tick(25.0);
+        assert!((state.sloth_points - 5.0).abs() < EPSILON);
 
+        // Unlock activity 1 (cost 5.0, reward 3.5, duration 12.5s)
+        let success = state.unlock_activity(1);
+        assert!(success);
+        assert!(state.activities[1].unlocked);
+        assert!((state.sloth_points - 0.0).abs() < EPSILON);
+
+        // In the next tick, BOTH activity 0 and activity 1 must advance
         state.tick(2.5);
-        assert!((state.generator.progress - 3.5).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.0).abs() < EPSILON);
-        assert!((state.progress_ratio() - 0.7).abs() < EPSILON);
+        assert!((state.activities[0].progress - 2.5).abs() < EPSILON);
+        assert!((state.activities[1].progress - 2.5).abs() < EPSILON);
 
-        state.tick(1.4);
-        assert!((state.generator.progress - 4.9).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.0).abs() < EPSILON);
+        // Tick another 10.0s -> Activity 1 reaches 12.5s and completes (+3.5 points)
+        // Activity 0 reaches 12.5s -> 2 completed cycles (10.0s) + 2.5s remainder (+2.0 points)
+        state.tick(10.0);
+        assert!((state.activities[1].progress - 0.0).abs() < EPSILON);
+        assert!((state.activities[0].progress - 2.5).abs() < EPSILON);
+        // Total points: 3.5 (from act 1) + 2.0 (from act 0) = 5.5
+        assert!((state.sloth_points - 5.5).abs() < EPSILON);
     }
 
     #[test]
-    fn test_tick_exact_completion() {
+    fn test_remanent_progress_and_exact_completion() {
         let mut state = GameState::new();
 
-        state.tick(5.0);
-        assert!((state.generator.progress - 0.0).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.7).abs() < EPSILON);
-    }
-
-    #[test]
-    fn test_tick_overflow_remanent() {
-        let mut state = GameState::new();
-
-        // 5.5s tick on a 5.0s cycle -> 0.5s remainder, 0.7 Primary awarded
+        // 5.5s tick on a 5.0s cycle
         state.tick(5.5);
-        assert!((state.generator.progress - 0.5).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.7).abs() < EPSILON);
+        assert!((state.activities[0].progress - 0.5).abs() < EPSILON);
+        assert!((state.sloth_points - 1.0).abs() < EPSILON);
 
-        // Another 4.6s tick -> total progress was 0.5 + 4.6 = 5.1s -> 0.1s remainder, 1.4 Primary total
-        state.tick(4.6);
-        assert!((state.generator.progress - 0.1).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 1.4).abs() < EPSILON);
+        // Another 4.5s -> exactly 5.0s
+        state.tick(4.5);
+        assert!((state.activities[0].progress - 0.0).abs() < EPSILON);
+        assert!((state.sloth_points - 2.0).abs() < EPSILON);
     }
 
     #[test]
-    fn test_tick_multiple_cycles() {
+    fn test_invalid_dt_ignored() {
         let mut state = GameState::new();
-
-        // 12.0s tick -> 2 completed cycles (10.0s), 2.0s remainder, 1.4 Primary awarded
-        state.tick(12.0);
-        assert!((state.generator.progress - 2.0).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 1.4).abs() < EPSILON);
-    }
-
-    #[test]
-    fn test_fractional_frame_ticks() {
-        let mut state = GameState::new();
-
-        // 40 ticks of 0.125s (1/8s) = exactly 5.0s (exact in IEEE 754)
-        for _ in 0..40 {
-            state.tick(0.125);
-        }
-
-        assert!(state.generator.progress.abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 0.7).abs() < EPSILON);
-
-        // Another 20 ticks of 0.25s = 5.0s
-        for _ in 0..20 {
-            state.tick(0.25);
-        }
-
-        assert!(state.generator.progress.abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 1.4).abs() < EPSILON);
-    }
-
-    #[test]
-    fn test_invalid_dt_handling() {
-        let mut state = GameState::new();
-        state.generator.progress = 2.0;
-        state.set_resource(ResourceId::Primary, 1.0);
+        state.activities[0].progress = 1.5;
+        state.sloth_points = 2.0;
 
         state.tick(0.0);
-        state.tick(-1.5);
+        state.tick(-1.0);
         state.tick(f64::NAN);
         state.tick(f64::INFINITY);
         state.tick(f64::NEG_INFINITY);
 
-        assert!((state.generator.progress - 2.0).abs() < EPSILON);
-        assert!((state.get_resource(ResourceId::Primary) - 1.0).abs() < EPSILON);
+        assert!((state.activities[0].progress - 1.5).abs() < EPSILON);
+        assert!((state.sloth_points - 2.0).abs() < EPSILON);
     }
 
     #[test]
-    fn test_resource_store_operations() {
+    fn test_action_handler() {
         let mut state = GameState::new();
-        assert_eq!(state.get_resource(ResourceId::Primary), 0.0);
+        state.sloth_points = 10.0;
 
-        state.add_resource(ResourceId::Primary, 1.5);
-        assert!((state.get_resource(ResourceId::Primary) - 1.5).abs() < EPSILON);
-
-        // Invalid additions should be ignored
-        state.add_resource(ResourceId::Primary, -0.5);
-        state.add_resource(ResourceId::Primary, 0.0);
-        state.add_resource(ResourceId::Primary, f64::NAN);
-        state.add_resource(ResourceId::Primary, f64::INFINITY);
-        assert!((state.get_resource(ResourceId::Primary) - 1.5).abs() < EPSILON);
-
-        state.set_resource(ResourceId::Primary, 10.0);
-        assert!((state.get_resource(ResourceId::Primary) - 10.0).abs() < EPSILON);
-
-        // Invalid sets should be ignored
-        state.set_resource(ResourceId::Primary, -5.0);
-        state.set_resource(ResourceId::Primary, f64::NAN);
-        assert!((state.get_resource(ResourceId::Primary) - 10.0).abs() < EPSILON);
+        assert!(state.handle_action(Action::UnlockActivity(1)));
+        assert!(state.activities[1].unlocked);
+        assert!((state.sloth_points - 5.0).abs() < EPSILON);
     }
 
     #[test]
-    fn test_progress_ratio() {
+    fn test_serialization_persistence() {
         let mut state = GameState::new();
-        assert!((state.progress_ratio() - 0.0).abs() < EPSILON);
+        state.sloth_points = 42.5;
+        state.activities[0].progress = 3.2;
 
-        state.generator.progress = 2.5;
-        assert!((state.progress_ratio() - 0.5).abs() < EPSILON);
-
-        state.generator.progress = 5.0;
-        assert!((state.progress_ratio() - 1.0).abs() < EPSILON);
-
-        state.generator.target_duration = 0.0;
-        assert!((state.progress_ratio() - 0.0).abs() < EPSILON);
-    }
-
-    #[test]
-    fn test_traits() {
         fn assert_traits<T: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync>() {}
-        assert_traits::<ResourceId>();
-        assert_traits::<Generator>();
+        assert_traits::<ActivityConfig>();
+        assert_traits::<ActivityState>();
+        assert_traits::<Action>();
         assert_traits::<GameState>();
     }
 }

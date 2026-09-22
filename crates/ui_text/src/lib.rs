@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use game_core::{GameState, Generator, ResourceId};
+use game_core::{ActivityState, GameState, Generator, ResourceId};
 use thiserror::Error;
 
 /// Domain errors for text rendering operations.
@@ -49,8 +49,7 @@ impl ResourcePresentationRegistry {
         self.custom_names.insert(id, name.into());
     }
 
-    /// Retrieves the display name for a resource, returning the custom name if configured
-    /// or falling back to the default display name.
+    /// Retrieves the display name for a resource.
     #[must_use]
     pub fn get_name(&self, id: ResourceId) -> &str {
         if let Some(custom) = self.custom_names.get(&id) {
@@ -83,20 +82,12 @@ pub const SUB_BLOCKS: [char; 9] = [
 /// * `current` - Current progress value.
 /// * `max` - Maximum target value.
 /// * `width_in_chars` - Number of terminal character columns for the bar.
-///
-/// # Safety and Determinism
-/// - Preallocates `String::with_capacity(width_in_chars * 4)` to avoid reallocations.
-/// - If `width_in_chars == 0`, returns an empty string immediately.
-/// - If `max <= 0.0`, `current <= 0.0`, or either is NaN/infinite, safely returns `width_in_chars` spaces without panicking.
-/// - Inputs are clamped to `[0.0, max]` to eliminate visual overflow.
 #[must_use]
 pub fn render_sub_block_bar(current: f64, max: f64, width_in_chars: usize) -> String {
     if width_in_chars == 0 {
         return String::new();
     }
 
-    // Pre-allocate buffer: 4 bytes per char ensures zero dynamic reallocations
-    // as UTF-8 block elements occupy 3 bytes each and spaces occupy 1 byte.
     let mut output = String::with_capacity(width_in_chars * 4);
 
     if !max.is_finite() || max <= 0.0 || !current.is_finite() || current <= 0.0 {
@@ -110,7 +101,6 @@ pub fn render_sub_block_bar(current: f64, max: f64, width_in_chars: usize) -> St
     let ratio = (clamped / max).clamp(0.0, 1.0);
     let total_eighths = width_in_chars * 8;
 
-    // Small epsilon to prevent float rounding down on exact multiples
     let filled_eighths = if clamped >= max {
         total_eighths
     } else {
@@ -144,9 +134,63 @@ pub fn render_sub_block_bar(current: f64, max: f64, width_in_chars: usize) -> St
     output
 }
 
-/// Formats a complete progress status line with a sub-block bar, percentage, and resource display.
+/// Formats a single activity display line.
 ///
-/// Example output: `[████████▌      ] 54% | Energía: 1.40`
+/// - If unlocked: displays index, name, Unicode sub-block bar, remaining time, and reward.
+/// - If locked: displays `[BLOQUEADO] Nombre - Costo: XX pts (Presiona [N] para comprar)`.
+#[must_use]
+pub fn format_activity_line(activity: &ActivityState, index: usize, bar_width: usize) -> String {
+    let key = index + 1;
+    if activity.unlocked {
+        let bar = render_sub_block_bar(activity.progress, activity.config.duration, bar_width);
+        let remaining = activity.remaining_time();
+        let mut line = String::with_capacity(bar_width * 4 + activity.config.name.len() + 64);
+        let _ = write!(
+            line,
+            "[{key}] {name} [{bar}] Faltan {remaining:.1}s | +{reward:.1} pts",
+            name = activity.config.name,
+            reward = activity.config.reward,
+        );
+        line
+    } else {
+        let mut line = String::with_capacity(activity.config.name.len() + 80);
+        let _ = write!(
+            line,
+            "[BLOQUEADO] {name} - Costo: {cost:.0} pts (Presiona [{key}] para comprar)",
+            name = activity.config.name,
+            cost = activity.config.cost,
+        );
+        line
+    }
+}
+
+/// Renders the complete multi-bar text frame for the procrastination game.
+///
+/// Header displays total balance: `Puntos de Flojera: XX.X`.
+/// Following lines display the formatted state of each activity in the roster.
+#[must_use]
+pub fn render_game_frame(state: &GameState, bar_width: usize) -> String {
+    let estimated_line_len = bar_width * 4 + 90;
+    let mut frame = String::with_capacity(state.activities.len() * estimated_line_len + 128);
+
+    let _ = writeln!(frame, "Puntos de Flojera: {:.1}", state.sloth_points);
+    let _ = writeln!(frame, "------------------------------------------------------------");
+
+    for (index, activity) in state.activities.iter().enumerate() {
+        let line = format_activity_line(activity, index, bar_width);
+        let _ = writeln!(frame, "{line}");
+    }
+
+    frame
+}
+
+/// Legacy helper for formatting a game state status.
+#[must_use]
+pub fn format_game_status(state: &GameState, bar_width: usize) -> String {
+    render_game_frame(state, bar_width)
+}
+
+/// Formats a single progress status line with a sub-block bar, percentage, and resource display.
 #[must_use]
 pub fn format_status_line(
     progress: f64,
@@ -163,7 +207,6 @@ pub fn format_status_line(
     };
     let percentage = (ratio * 100.0).floor() as u32;
 
-    // Pre-allocate buffer capacity to prevent dynamic reallocations during frame renders.
     let mut output = String::with_capacity(bar_width * 4 + resource_label.len() + 32);
     let _ = write!(
         output,
@@ -185,20 +228,6 @@ pub fn format_generator_status(
         generator.target_duration,
         label,
         resource_amount,
-        bar_width,
-    )
-}
-
-/// Formats a status line directly from the current `GameState`.
-#[must_use]
-pub fn format_game_status(state: &GameState, bar_width: usize) -> String {
-    let label = resource_name(state.generator.output_resource);
-    let amount = state.get_resource(state.generator.output_resource);
-    format_status_line(
-        state.generator.progress,
-        state.generator.target_duration,
-        label,
-        amount,
         bar_width,
     )
 }
@@ -265,8 +294,6 @@ mod tests {
 
     #[test]
     fn test_fractional_sub_blocks() {
-        // 10 chars = 80 eighths.
-        // 5.0 * (43 / 80) = 2.6875 -> 43 eighths = 5 full blocks (40 eighths) + remainder 3 ('▍')
         let current = 5.0 * (43.0 / 80.0);
         let bar = render_sub_block_bar(current, 5.0, 10);
         assert_eq!(bar, "█████▍    ");
@@ -295,20 +322,8 @@ mod tests {
 
     #[test]
     fn test_format_status_line() {
-        // 2.7 / 5.0 = 54%
-        // In 16-char bar: 16 * 8 = 128 eighths. 128 * 0.54 = 69.12 eighths -> 8 full blocks (64 eighths) + remainder 5 ('▋') + 7 spaces
         let status = format_status_line(2.7, 5.0, "Energía", 1.40, 16);
         assert_eq!(status, "[████████▋       ] 54% | Energía: 1.40");
-    }
-
-    #[test]
-    fn test_format_game_status() {
-        let mut state = GameState::new();
-        state.generator.progress = 2.5;
-        state.add_resource(ResourceId::Primary, 0.7);
-
-        let status = format_game_status(&state, 10);
-        assert_eq!(status, "[█████     ] 50% | Energía: 0.70");
     }
 
     #[test]
@@ -316,5 +331,55 @@ mod tests {
         let generator = Generator::default();
         let status = format_generator_status(&generator, 0.0, 10);
         assert_eq!(status, "[          ] 0% | Energía: 0.00");
+    }
+
+    #[test]
+    fn test_format_activity_line_unlocked() {
+        let state = GameState::new();
+        let line = format_activity_line(&state.activities[0], 0, 10);
+        assert!(line.contains("[1] Esperar a que cargue la barrita"));
+        assert!(line.contains("[          ]"));
+        assert!(line.contains("Faltan 5.0s"));
+        assert!(line.contains("+1.0 pts"));
+    }
+
+    #[test]
+    fn test_format_activity_line_locked() {
+        let state = GameState::new();
+        let line = format_activity_line(&state.activities[1], 1, 10);
+        assert_eq!(
+            line,
+            "[BLOQUEADO] Mirar a la nada fijamente - Costo: 5 pts (Presiona [2] para comprar)"
+        );
+    }
+
+    #[test]
+    fn test_render_game_frame() {
+        let mut state = GameState::new();
+        state.sloth_points = 12.5;
+        state.activities[0].progress = 2.5;
+
+        let frame = render_game_frame(&state, 10);
+        let lines: Vec<&str> = frame.lines().collect();
+
+        assert_eq!(lines[0], "Puntos de Flojera: 12.5");
+        assert_eq!(lines[1], "------------------------------------------------------------");
+        assert!(lines[2].contains("[1] Esperar a que cargue la barrita [█████     ] Faltan 2.5s | +1.0 pts"));
+        assert_eq!(
+            lines[3],
+            "[BLOQUEADO] Mirar a la nada fijamente - Costo: 5 pts (Presiona [2] para comprar)"
+        );
+        assert_eq!(
+            lines[4],
+            "[BLOQUEADO] Hacer scroll infinito sin ver nada - Costo: 25 pts (Presiona [3] para comprar)"
+        );
+        assert_eq!(
+            lines[5],
+            "[BLOQUEADO] Abrir la refri vacía por quinta vez - Costo: 100 pts (Presiona [4] para comprar)"
+        );
+        assert_eq!(
+            lines[6],
+            "[BLOQUEADO] Ordenar el escritorio para no trabajar - Costo: 350 pts (Presiona [5] para comprar)"
+        );
     }
 }
