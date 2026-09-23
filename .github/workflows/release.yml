@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -41,10 +41,10 @@ jobs:
             os: macos-latest
             bin_name: mucking-around
             asset_name: mucking-around-aarch64-apple-darwin.tar.gz
-          - target: x86_64-apple-darwin
-            os: macos-13
-            bin_name: mucking-around
-            asset_name: mucking-around-x86_64-apple-darwin.tar.gz
+          # - target: x86_64-apple-darwin
+          #   os: macos-13
+          #   bin_name: mucking-around
+          #   asset_name: mucking-around-x86_64-apple-darwin.tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             bin_name: mucking-around.exe
@@ -103,7 +103,7 @@ jobs:
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
-          version: 'latest'
+          version: "latest"
 
       - name: Build WebAssembly package
         run: wasm-pack build crates/web --target web --out-dir ../../www/pkg
